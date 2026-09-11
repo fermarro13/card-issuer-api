@@ -1,0 +1,99 @@
+# Card Issuer API
+
+Start the complete local development environment:
+
+```bash
+docker compose up --build
+```
+
+Docker Desktop must be running with Linux containers. Go, PowerShell and PostgreSQL are installed inside the images; they are not required on your host for this command. The initial image download/build requires internet access. The initialization image installs PowerShell from Microsoft's signed Debian package repository; this setup targets the current Windows/x86-64 development machine.
+
+The API is available at [http://localhost:8080/health/live](http://localhost:8080/health/live). [Readiness](http://localhost:8080/health/ready) checks both database connections. Only the base server and health endpoints are implemented; authentication and card operations will be added in later features.
+
+## What starts
+
+| Service | Purpose |
+| --- | --- |
+| `postgres` | PostgreSQL 17.11 with a named persistent volume and two databases. |
+| `db-init` | Runs existing schema migrations and test seeds, provisions restricted connection accounts, verifies their credentials, then exits successfully. |
+| `app` | Go 1.27.1 server running as non-root with separate control/shard pools. |
+
+Compose waits for healthy PostgreSQL and successful initialization before starting the app. `db-init` showing **Exited (0)** is expected. PostgreSQL is reachable only on the Compose network; the API is published at `127.0.0.1:8080`.
+
+Both databases remain distinct: `card_issuer_control` stores routing/authentication and `card_issuer_shard_01` stores bank data. Existing migrations, checksums and seeds are reused unchanged. Every new initialization run checks migration history and preserves existing accounts, passwords and data.
+
+## Health endpoints
+
+| Endpoint | Success | Failure |
+| --- | --- | --- |
+| `GET /health/live` | 200, `{"status":"ok"}` | Independent of database availability. |
+| `GET /health/ready` | 200, `{"status":"ready"}` | 503, `{"status":"not_ready"}` if either database check fails or the shared two-second deadline expires. |
+
+The application keeps running during a database outage and becomes ready again when both connections recover. Database details and credentials are excluded from HTTP responses. Each pool is limited to five connections. HTTP requests and graceful shutdown have bounded timeouts.
+
+## Development credentials and overrides
+
+The four application test accounts are documented in [database/TEST-CREDENTIALS.md](database/TEST-CREDENTIALS.md). Both bank users belong to Test Bank. These accounts are distinct from PostgreSQL connection accounts.
+
+The following deliberately public defaults make local startup work without configuration:
+
+| PostgreSQL account | Default password | Purpose |
+| --- | --- | --- |
+| `postgres` | `Dev-Postgres-Admin!2026` | PostgreSQL initialization and `db-init` only. |
+| `ci_app_control` | `Dev-Control-Reader!2026` | `ci_routing_reader` membership; control directory reads. |
+| `ci_app_shard` | `Dev-Shard-Runtime!2026` | `ci_business_runtime` membership; tenant-scoped shard access. |
+
+The app receives only the two runtime passwords. Runtime accounts have no ownership, role/database creation, superuser, replication or RLS bypass privileges. The current health endpoints perform connection checks and introduce no tenant selection or business queries.
+
+Optionally copy `.env.example` to `.env` before first startup and override the API port, database names, shard ID or technical passwords. `.env` is ignored by Git and excluded from image builds. Keep these values local to development.
+
+**Existing volumes retain passwords.** Changing `POSTGRES_PASSWORD` in `.env` does not change an initialized PostgreSQL administrator password. Runtime account provisioning also preserves existing technical passwords and verifies the supplied credentials; a mismatch fails initialization. To change a password while preserving data, use an authenticated administrator session and psql's `\password account_name`, then update `.env` to match. Application staff passwords are likewise never reset by seeds.
+
+## Everyday commands
+
+```bash
+# Run in the background; inspect status and logs.
+docker compose up --build -d
+docker compose ps -a
+docker compose logs -f app db-init
+
+# Stop and remove containers, retaining database data.
+docker compose down
+
+# Rebuild/recreate the app after code changes.
+docker compose up --build -d app
+
+# Open an administrative SQL session inside PostgreSQL.
+docker compose exec postgres psql -U postgres -d card_issuer_control
+
+# Explicitly rerun initialization against retained data.
+docker compose run --rm db-init
+```
+
+New migration files require rebuilding `db-init` because SQL is copied into its image. For an orderly migration/rebuild cycle, run `docker compose down` followed by `docker compose up --build`. Dependencies gate **new startup**; they do not stop an already-running app if a separately executed initializer fails. Existing application processes are not automatically supervised by the initializer.
+
+For a deliberately empty development database, `docker compose down --volumes` removes this project's persistent database volume and its contents. The next `docker compose up --build` initializes fresh databases and test users. Normal shutdown does not delete data.
+
+## Verification
+
+Run server unit tests with Go 1.27.1:
+
+```bash
+go version
+go test -count=1 ./...
+go vet ./...
+```
+
+Without `CI_TEST_DATABASE=1`, the runtime database integration test is explicitly skipped. To run it, set `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, and `PSQL` for an administrative connection to a disposable PostgreSQL 17 server using SCRAM/password authentication; set `CI_TEST_DATABASE=1`, then run `go test -count=1 -v ./...`. The test creates/removes only random `ci_env_*` databases. It uses fixed technical roles and intentionally tests their privilege guards, so use a dedicated test instance. It leaves its technical roles for reuse. The existing database suite is a separate Go module: follow [database/README.md](database/README.md#verify).
+
+For actual container builds and lifecycle checks, run the PowerShell 7 smoke test:
+
+```powershell
+./scripts/Test-Compose.ps1
+```
+
+It uses its own randomly named Compose project and port 18080 (override with `-AppPort`). It verifies empty-volume startup, migration/user creation, non-root execution, retained passwords, PostgreSQL outage/recovery, and initialization-failure gating. It removes only that test project's containers and disposable volume afterward. This test requires a working Docker engine.
+
+If Docker Desktop reports `HCS_E_HYPERV_NOT_INSTALLED`, its WSL2 engine cannot start until Windows Virtual Machine Platform and firmware virtualization are available. Container tests cannot run in that state; ordinary Go/PostgreSQL test evidence does not substitute for a successful image build.
+
+See [database schema](database/SCHEMA.md), [database tooling](database/README.md), and [the design](docs/database-design.md) for data-model and application responsibilities.

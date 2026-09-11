@@ -1,0 +1,5 @@
+.local/
+database/tests/.test-output/
+.env
+.env.*
+!.env.example

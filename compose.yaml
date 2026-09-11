@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Dev-Postgres-Admin!2026}
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    restart: unless-stopped
+
+  db-init:
+    build:
+      context: .
+      target: db-init
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD:-Dev-Postgres-Admin!2026}
+      CONTROL_DATABASE: ${CONTROL_DATABASE:-card_issuer_control}
+      SHARD_DATABASE: ${SHARD_DATABASE:-card_issuer_shard_01}
+      SHARD_ID: ${SHARD_ID:-shard_01}
+      CONTROL_DB_PASSWORD: ${CONTROL_DB_PASSWORD:-Dev-Control-Reader!2026}
+      SHARD_DB_PASSWORD: ${SHARD_DB_PASSWORD:-Dev-Shard-Runtime!2026}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: app
+    environment:
+      HTTP_ADDR: ":8080"
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGSSLMODE: disable
+      CONTROL_DATABASE: ${CONTROL_DATABASE:-card_issuer_control}
+      SHARD_DATABASE: ${SHARD_DATABASE:-card_issuer_shard_01}
+      CONTROL_DB_USER: ci_app_control
+      SHARD_DB_USER: ci_app_shard
+      CONTROL_DB_PASSWORD: ${CONTROL_DB_PASSWORD:-Dev-Control-Reader!2026}
+      SHARD_DB_PASSWORD: ${SHARD_DB_PASSWORD:-Dev-Shard-Runtime!2026}
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/card-issuer-api", "healthcheck"]
+      interval: 5s
+      timeout: 4s
+      retries: 5
+      start_period: 5s
+    stop_grace_period: 15s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
