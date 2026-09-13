@@ -2,11 +2,25 @@
 
 Creates the database design in [the project design](../docs/database-design.md): a central control database (five tables) and one bank shard (twelve tables). PostgreSQL **17** is the tested baseline. No PostgreSQL extensions are required.
 
-The default development workflow is now `docker compose up --build` from the repository root; see [the environment README](../README.md). Compose installs the required tools inside containers, runs this same initialization, provisions separate technical connection accounts and starts the Go base server. The standalone workflow below remains available for an existing PostgreSQL instance.
+The default development workflow is `docker compose up --build` from the repository root; see [the environment README](../README.md). Compose runs the portable shell initializer inside its PostgreSQL Linux container, provisions separate technical connection accounts, and starts the Go base server. It works with Docker Desktop on Windows/macOS and Docker Engine on Linux. The standalone workflow below remains available for an existing PostgreSQL instance.
 
 ## Run against your existing PostgreSQL instance
 
-Install PowerShell 7 and the PostgreSQL `psql` client. Connect as an administrator with permission to create databases/roles and assume `ci_owner`. Bootstrap requires those privileges; migration-only runs require `CONNECT` and permission to assume `ci_owner` on each target database. Configure connection credentials through your normal libpq environment/service/password-file setup, outside source control. The runner uses `--no-password` so unattended calls fail instead of waiting for an interactive prompt.
+Install the PostgreSQL `psql` client and connect as an administrator with permission to create databases/roles and assume `ci_owner`. Bootstrap requires those privileges; migration-only runs require `CONNECT` and permission to assume `ci_owner` on each target database. Configure connection credentials through your normal libpq environment/service/password-file setup, outside source control. Both runners use `--no-password` so unattended calls fail instead of waiting for an interactive prompt.
+
+On Linux/macOS, use `/bin/sh`; the runner requires `sha256sum` (commonly Linux) or `shasum` (included with macOS). On Windows, use PowerShell 7. The two runners have matching actions and validation:
+
+Linux/macOS:
+
+```sh
+export PGHOST=localhost
+export PGPORT=5432
+export PGUSER=postgres
+# Supply authentication through your existing libpq password file or environment.
+sh ./database/Invoke-Database.sh --action SetupTest
+```
+
+Windows PowerShell:
 
 ```powershell
 $env:PGHOST = 'localhost'
@@ -16,9 +30,18 @@ $env:PGUSER = 'postgres'
 ./database/Invoke-Database.ps1 -Action SetupTest
 ```
 
-`SetupTest` creates roles/databases if absent, applies migrations, provisions Test Bank on the shard, then inserts its central routing entry and four staff accounts. Their passwords are in [TEST-CREDENTIALS.md](TEST-CREDENTIALS.md). These are application accounts; no API login endpoint exists in this repository yet. All PostgreSQL roles created by bootstrap are `NOLOGIN` groups. Compose additionally uses `Initialize-Compose.ps1` and `compose-runtime.sql` to provision and verify its two restricted login accounts after SetupTest succeeds.
+`SetupTest` creates roles/databases if absent, applies migrations, provisions Test Bank on the shard, then inserts its central routing entry and four staff accounts. Their passwords are in [TEST-CREDENTIALS.md](TEST-CREDENTIALS.md). These are application accounts; no API login endpoint exists in this repository yet. All PostgreSQL roles created by bootstrap are `NOLOGIN` groups. Compose uses `Initialize-Compose.sh` and `compose-runtime.sql` to provision and verify its two restricted login accounts after SetupTest succeeds.
 
 To specify a client executable or different database names:
+
+```sh
+sh ./database/Invoke-Database.sh \
+  --action SetupTest \
+  --psql /usr/local/bin/psql \
+  --control-database issuer_test_control \
+  --shard-database issuer_test_shard \
+  --shard-id shard_01
+```
 
 ```powershell
 ./database/Invoke-Database.ps1 -Action SetupTest `
@@ -30,7 +53,12 @@ To specify a client executable or different database names:
 
 Database identifiers must be distinct ASCII identifiers of at most 63 characters. `ShardId` is the logical directory key, not a hostname or credential. Its default is `shard_01`. Database names default to `card_issuer_control` and `card_issuer_shard_01`; the administrative connection defaults to `postgres`.
 
-For an empty schema without testing accounts, execute these two commands in order:
+For an empty schema without testing accounts, execute these two commands in order. Use the matching syntax for your platform:
+
+```sh
+sh ./database/Invoke-Database.sh --action Bootstrap
+sh ./database/Invoke-Database.sh --action Migrate
+```
 
 ```powershell
 ./database/Invoke-Database.ps1 -Action Bootstrap
@@ -76,7 +104,21 @@ Workers must enforce claim/fencing/retry rules, all-items success or failure, cu
 
 ## Verify
 
-The harness uses Go **1.27.1**, `pwsh`, and `psql` against a disposable PostgreSQL **17** instance. It creates random `ci_test_*` databases and removes only those databases on completion. Cluster-wide `ci_*` group roles may be created and remain for reuse. Do not point this test harness at production.
+The harness uses Go **1.27.1** and `psql` against a disposable PostgreSQL **17** instance. It selects the PowerShell runner on Windows and the POSIX-shell runner on Linux/macOS. It creates random `ci_test_*` databases and removes only those databases on completion. Cluster-wide `ci_*` group roles may be created and remain for reuse. Do not point this test harness at production.
+
+Linux/macOS:
+
+```sh
+export GOTOOLCHAIN=go1.27.1
+export CI_TEST_DATABASE=1
+export PSQL=/usr/bin/psql
+# PGHOST, PGPORT, PGUSER and libpq authentication refer to the disposable server.
+cd database/tests
+go version
+go test -count=1 -v ./...
+```
+
+Windows PowerShell:
 
 ```powershell
 $env:GOTOOLCHAIN = 'go1.27.1'

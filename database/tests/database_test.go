@@ -75,8 +75,8 @@ func TestPasswordFixtures(t *testing.T) {
 }
 
 type harness struct {
-	t                            *testing.T
-	psql, runner, control, shard string
+	t                                           *testing.T
+	psql, runner, runnerCommand, control, shard string
 }
 
 func (h harness) sql(db, statement string) (string, error) {
@@ -107,9 +107,20 @@ func (h harness) reject(db, statement, state string) {
 	}
 }
 func (h harness) run(action string, extra ...string) (string, error) {
-	args := []string{"-NoProfile", "-File", h.runner, "-Action", action, "-Psql", h.psql, "-ControlDatabase", h.control, "-ShardDatabase", h.shard}
-	args = append(args, extra...)
-	out, err := exec.Command("pwsh", args...).CombinedOutput()
+	var args []string
+	if h.runnerCommand == "pwsh" {
+		args = []string{"-NoProfile", "-File", h.runner, "-Action", action, "-Psql", h.psql, "-ControlDatabase", h.control, "-ShardDatabase", h.shard}
+		args = append(args, extra...)
+	} else {
+		args = []string{h.runner, "--action", action, "--psql", h.psql, "--control-database", h.control, "--shard-database", h.shard}
+		for _, value := range extra {
+			if value == "-MigrationRoot" {
+				value = "--migration-root"
+			}
+			args = append(args, value)
+		}
+	}
+	out, err := exec.Command(h.runnerCommand, args...).CombinedOutput()
 	return string(out), err
 }
 func (h harness) setup() {
@@ -139,12 +150,19 @@ func TestDatabaseIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner, err := filepath.Abs("../Invoke-Database.ps1")
+	runnerName, runnerCommand := "../Invoke-Database.ps1", "pwsh"
+	if runtime.GOOS != "windows" {
+		runnerName, runnerCommand = "../Invoke-Database.sh", "sh"
+	}
+	if _, err := exec.LookPath(runnerCommand); err != nil {
+		t.Fatal(err)
+	}
+	runner, err := filepath.Abs(runnerName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	prefix := fmt.Sprintf("ci_test_%d", time.Now().UnixNano())
-	h := harness{t, psql, runner, prefix + "_control", prefix + "_shard"}
+	h := harness{t: t, psql: psql, runner: runner, runnerCommand: runnerCommand, control: prefix + "_control", shard: prefix + "_shard"}
 	if version := h.must("postgres", "SHOW server_version_num;"); !strings.HasPrefix(version, "17") {
 		t.Fatalf("expected PostgreSQL 17; got %s", version)
 	}

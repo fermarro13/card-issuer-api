@@ -6,7 +6,7 @@ Start the complete local development environment:
 docker compose up --build
 ```
 
-Docker Desktop must be running with Linux containers. Go, PowerShell and PostgreSQL are installed inside the images; they are not required on your host for this command. The initial image download/build requires internet access. The initialization image installs PowerShell from Microsoft's signed Debian package repository; this setup targets the current Windows/x86-64 development machine.
+Use Docker Desktop with Linux containers on Windows or macOS, or Docker Engine with Compose v2 on Linux. Go and PostgreSQL run inside the images; neither is required on the host for this command. The initial image download/build requires internet access.
 
 The API is available at [http://localhost:8080/health/live](http://localhost:8080/health/live). [Readiness](http://localhost:8080/health/ready) checks both database connections. Only the base server and health endpoints are implemented; authentication and card operations will be added in later features.
 
@@ -15,7 +15,7 @@ The API is available at [http://localhost:8080/health/live](http://localhost:808
 | Service | Purpose |
 | --- | --- |
 | `postgres` | PostgreSQL 17.11 with a named persistent volume and two databases. |
-| `db-init` | Runs existing schema migrations and test seeds, provisions restricted connection accounts, verifies their credentials, then exits successfully. |
+| `db-init` | Runs portable shell-based schema migrations and test seeds, provisions restricted connection accounts, verifies their credentials, then exits successfully. |
 | `app` | Go 1.27.1 server running as non-root with separate control/shard pools. |
 
 Compose waits for healthy PostgreSQL and successful initialization before starting the app. `db-init` showing **Exited (0)** is expected. PostgreSQL is reachable only on the Compose network; the API is published at `127.0.0.1:8080`.
@@ -86,14 +86,22 @@ go vet ./...
 
 Without `CI_TEST_DATABASE=1`, the runtime database integration test is explicitly skipped. To run it, set `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, and `PSQL` for an administrative connection to a disposable PostgreSQL 17 server using SCRAM/password authentication; set `CI_TEST_DATABASE=1`, then run `go test -count=1 -v ./...`. The test creates/removes only random `ci_env_*` databases. It uses fixed technical roles and intentionally tests their privilege guards, so use a dedicated test instance. It leaves its technical roles for reuse. The existing database suite is a separate Go module: follow [database/README.md](database/README.md#verify).
 
-For actual container builds and lifecycle checks, run the PowerShell 7 smoke test:
+For actual container builds and lifecycle checks, run the smoke test for your host shell:
+
+Windows with PowerShell 7:
 
 ```powershell
 ./scripts/Test-Compose.ps1
 ```
 
-It uses its own randomly named Compose project and port 18080 (override with `-AppPort`). It verifies empty-volume startup, migration/user creation, non-root execution, retained passwords, PostgreSQL outage/recovery, and initialization-failure gating. It removes only that test project's containers and disposable volume afterward. This test requires a working Docker engine.
+Linux or macOS with `/bin/sh` and `curl`:
 
-If Docker Desktop reports `HCS_E_HYPERV_NOT_INSTALLED`, its WSL2 engine cannot start until Windows Virtual Machine Platform and firmware virtualization are available. Container tests cannot run in that state; ordinary Go/PostgreSQL test evidence does not substitute for a successful image build.
+```sh
+sh ./scripts/Test-Compose.sh
+```
+
+Pass `--app-port 18080` to the shell script or `-AppPort 18080` to the PowerShell script to choose another isolated port. Both tests verify empty-volume startup, migration/user creation, non-root execution, retained passwords, PostgreSQL outage/recovery, and initialization-failure gating. Each removes only its randomly named Compose project and disposable volume afterward. They require a working Docker engine and Docker Compose v2; the shell version also requires `curl`.
+
+On Windows, `HCS_E_HYPERV_NOT_INSTALLED` means Docker Desktop's WSL2 engine cannot start until Windows Virtual Machine Platform and firmware virtualization are available. On Linux, ensure the Docker daemon is running and the current user can access it. Container tests cannot run until Docker can start Linux containers; ordinary Go/PostgreSQL test evidence does not substitute for a successful image build.
 
 See [database schema](database/SCHEMA.md), [database tooling](database/README.md), and [the design](docs/database-design.md) for data-model and application responsibilities.

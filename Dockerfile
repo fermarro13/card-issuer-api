@@ -9,20 +9,10 @@ COPY internal ./internal
 RUN go test ./... && go vet ./... && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-api ./cmd/api
 
 FROM postgres:17.11-bookworm AS db-init
-# Use Microsoft's signed Debian repository for PowerShell; psql comes from PostgreSQL's image.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && curl -fsSL https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -o /tmp/packages-microsoft-prod.deb \
-    && dpkg -i /tmp/packages-microsoft-prod.deb \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends powershell \
-    && rm -f /tmp/packages-microsoft-prod.deb \
-    && rm -rf /var/lib/apt/lists/*
-ENV POWERSHELL_TELEMETRY_OPTOUT=1 DOTNET_CLI_TELEMETRY_OPTOUT=1
 WORKDIR /workspace
 COPY database /workspace/database
 USER postgres
-ENTRYPOINT ["pwsh", "-NoLogo", "-NoProfile", "-File", "/workspace/database/Initialize-Compose.ps1"]
+ENTRYPOINT ["sh", "/workspace/database/Initialize-Compose.sh"]
 
 FROM scratch AS app
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
