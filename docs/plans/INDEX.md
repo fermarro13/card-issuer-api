@@ -9,5 +9,6 @@
 | 2026-09-10 | [PostgreSQL Creation Scripts](2026-09-10-postgresql-creation-scripts.md) | Implemented |
 | 2026-09-11 | [Docker Compose Development Environment](2026-09-11-docker-compose-environment.md) | Implemented; Docker acceptance pending |
 | 2026-09-13 | [Authentication Endpoints](2026-09-13-authentication-endpoints.md) | Implemented; QA pending PostgreSQL integration |
+| 2026-09-13 | [Public Resource and Card Command API](2026-09-13-public-resource-api.md) | Implemented; QA coverage pending |
 
 Keep this index current whenever an approved plan is added, superseded, or completed.

@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "8ea3a2e9-34c4-4a41-bdd7-c6845df18fe6",
     "name": "Card Issuer API",
-    "description": "Colección para los endpoints implementados. Configure base_url para el entorno objetivo. Las credenciales iniciales son exclusivamente las cuentas seed de desarrollo documentadas en database/TEST-CREDENTIALS.md.\n\nLos POST de autenticación no requieren Idempotency-Key. Login y refresh devuelven access_token; los scripts de prueba lo guardan en la variable de colección access_token. El refresh token nunca se devuelve en JSON: Postman debe conservar la cookie __Host-card-issuer-refresh de login. Para una API HTTP local, use el administrador de cookies de Postman o configure HTTPS, ya que la cookie es Secure.",
+    "description": "Colección para los endpoints implementados, incluida la Public Resource API. Configure base_url para el entorno objetivo. Las credenciales iniciales son exclusivamente las cuentas seed de desarrollo documentadas en database/TEST-CREDENTIALS.md.\n\nLos POST de autenticación no requieren Idempotency-Key. Login y refresh devuelven access_token; los scripts de prueba lo guardan en la variable de colección access_token. El refresh token nunca se devuelve en JSON: Postman debe conservar la cookie __Host-card-issuer-refresh de login. Para una API HTTP local, use el administrador de cookies de Postman o configure HTTPS, ya que la cookie es Secure.\n\nTodos los cambios de recursos requieren Idempotency-Key. Las solicitudes de esta colección usan {{$guid}} para generar una clave nueva en cada envío. Ejecute Login antes de Public Resource API y ejecute sus carpetas en orden para guardar los IDs creados.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -11,7 +11,17 @@
     { "key": "password", "value": "Test-Issuer-Operator!2026", "type": "string" },
     { "key": "new_password", "value": "ChangeThisPassword!2026", "type": "string" },
     { "key": "access_token", "value": "", "type": "string" },
-    { "key": "request_id", "value": "90000000-0000-4000-8000-000000000001", "type": "string" }
+    { "key": "request_id", "value": "90000000-0000-4000-8000-000000000001", "type": "string" },
+    { "key": "bank_id", "value": "10000000-0000-4000-8000-000000000001", "type": "string" },
+    { "key": "provisioned_bank_id", "value": "", "type": "string" },
+    { "key": "user_id", "value": "", "type": "string" },
+    { "key": "product_id", "value": "", "type": "string" },
+    { "key": "client_id", "value": "", "type": "string" },
+    { "key": "account_reference_id", "value": "", "type": "string" },
+    { "key": "card_id", "value": "", "type": "string" },
+    { "key": "replacement_card_id", "value": "", "type": "string" },
+    { "key": "expiry_run_id", "value": "", "type": "string" },
+    { "key": "expiry_item_id", "value": "", "type": "string" }
   ],
   "item": [
     {
@@ -140,6 +150,98 @@
             "url": "{{base_url}}/v1/auth/logout",
             "description": "No requiere cuerpo ni parámetros. Usa la cookie __Host-card-issuer-refresh si está presente, revoca su sesión y siempre limpia la cookie. Devuelve 204 incluso si no hay cookie o es inválida."
           }
+        }
+      ]
+    },
+    {
+      "name": "Public Resource API",
+      "description": "Las rutas de recursos requieren un bearer token emitido por Login. Las operaciones que escriben usan una clave de idempotencia nueva; para comprobar un replay, reenvíe manualmente una misma solicitud con el mismo Idempotency-Key.",
+      "auth": {
+        "type": "bearer",
+        "bearer": [ { "key": "token", "value": "{{access_token}}", "type": "string" } ]
+      },
+      "item": [
+        {
+          "name": "Bank directory",
+          "item": [
+            { "name": "List banks", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks", "description": "Solo issuer_operator. Colección cursor con data y next_cursor." } },
+            {
+              "name": "Provision bank",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('provisions a bank', function () { pm.response.to.have.status(201); pm.collectionVariables.set('provisioned_bank_id', pm.response.json().id); });" ] } } ],
+              "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"bank_reference\": \"postman-{{$guid}}\",\n  \"name\": \"Postman Bank\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks", "description": "Solo issuer_operator. Crea y activa una ruta de banco en el shard configurado." }
+            },
+            { "name": "Get bank", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}" } },
+            { "name": "Patch bank", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Test Bank (Postman)\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}", "description": "Solo issuer_operator. bank_reference es inmutable." } }
+          ]
+        },
+        {
+          "name": "Staff administration",
+          "item": [
+            { "name": "List users", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/users", "description": "Solo issuer_operator. No expone hashes ni credenciales." } },
+            {
+              "name": "Create issuer readonly user",
+              "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('creates a staff user', function () { pm.response.to.have.status(201); pm.collectionVariables.set('user_id', pm.response.json().id); });" ] } } ],
+              "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"username\": \"postman_{{$guid}}\",\n  \"password\": \"PostmanUser!2026\",\n  \"role\": \"issuer_readonly\",\n  \"entity_id\": \"\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/users" }
+            },
+            { "name": "Get user", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/users/{{user_id}}" } },
+            { "name": "Patch user role", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"role\": \"issuer_readonly\",\n  \"entity_id\": null\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/users/{{user_id}}" } },
+            { "name": "Set user password", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"new_password\": \"PostmanReset!2026\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/users/{{user_id}}:set-password" } },
+            { "name": "Disable user", "request": { "method": "POST", "header": [ { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "url": "{{base_url}}/v1/users/{{user_id}}:disable", "description": "Deshabilita al usuario creado arriba." } }
+          ]
+        },
+        {
+          "name": "Reference data",
+          "item": [
+            {
+              "name": "Card products",
+              "item": [
+                { "name": "List products", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/card-products?page_size=50" } },
+                { "name": "Create product", "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('creates a product', function () { pm.response.to.have.status(201); pm.collectionVariables.set('product_id', pm.response.json().id); });" ] } } ], "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"product_code\": \"postman-{{$guid}}\",\n  \"name\": \"Postman product\",\n  \"status\": \"active\",\n  \"configuration\": { \"currency\": \"USD\" }\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/card-products" } },
+                { "name": "Get product", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/card-products/{{product_id}}" } },
+                { "name": "Patch product", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Postman product v2\",\n  \"configuration\": { \"currency\": \"USD\", \"spend_limit\": 1000 }\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/card-products/{{product_id}}", "description": "Configuration cambia configuration_version; product_code es inmutable." } }
+              ]
+            },
+            {
+              "name": "Clients",
+              "item": [
+                { "name": "List clients", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/clients?page_size=50" } },
+                { "name": "Create client", "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('creates a client', function () { pm.response.to.have.status(201); pm.collectionVariables.set('client_id', pm.response.json().id); });" ] } } ], "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"external_client_ref\": \"postman-{{$guid}}\",\n  \"display_name\": \"Postman client\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/clients" } },
+                { "name": "Get client", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/clients/{{client_id}}" } },
+                { "name": "Patch client", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"display_name\": \"Postman client v2\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/clients/{{client_id}}", "description": "external_client_ref es inmutable." } }
+              ]
+            },
+            {
+              "name": "Account references",
+              "item": [
+                { "name": "List account references", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/account-references?page_size=50" } },
+                { "name": "Create account reference", "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('creates an account reference', function () { pm.response.to.have.status(201); pm.collectionVariables.set('account_reference_id', pm.response.json().id); });" ] } } ], "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"client_id\": \"{{client_id}}\",\n  \"external_account_ref\": \"postman-{{$guid}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/account-references" } },
+                { "name": "Get account reference", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/account-references/{{account_reference_id}}" } },
+                { "name": "Rebind account reference", "request": { "method": "PATCH", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"client_id\": \"{{client_id}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/account-references/{{account_reference_id}}", "description": "Solo es válido si la integridad referencial permite el rebinding. external_account_ref es inmutable." } }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Cards and operations",
+          "item": [
+            { "name": "List cards with filters", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/cards?client_id={{client_id}}&account_reference_id={{account_reference_id}}&product_id={{product_id}}&status=issued&page_size=50", "description": "Filtros exactos admitidos: client_id, account_reference_id, product_id y status. La respuesta es una colección cursor." } },
+            { "name": "Issue card", "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('issues a card', function () { pm.response.to.have.status(201); pm.collectionVariables.set('card_id', pm.response.json().card.id); });" ] } } ], "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"client_id\": \"{{client_id}}\",\n  \"account_reference_id\": \"{{account_reference_id}}\",\n  \"product_id\": \"{{product_id}}\",\n  \"reason\": \"Initial issue through Postman\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards", "description": "Devuelve resúmenes de card y operation. Nunca devuelve PAN, CVV, provider data ni credential_reference." } },
+            { "name": "Get card", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}" } },
+            { "name": "Activate card", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Activate through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}:activate" } },
+            { "name": "Suspend card", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Suspend through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}:suspend" } },
+            { "name": "Resume card", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Resume through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}:resume" } },
+            { "name": "Replace card", "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('replaces a card', function () { pm.response.to.have.status(201); pm.collectionVariables.set('replacement_card_id', pm.response.json().card.id); });" ] } } ], "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Replace through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}:replace", "description": "Solo issuer_operator y solo desde active o suspended. La sucesora conserva cliente, cuenta y producto." } },
+            { "name": "Activate replacement", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Activate replacement through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{replacement_card_id}}:activate", "description": "La activación cierra atómicamente la tarjeta predecesora." } },
+            { "name": "Card history", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}/history?page_size=50" } },
+            { "name": "Card operations", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}/operations?page_size=50" } },
+            { "name": "Close replacement card", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Close through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{replacement_card_id}}:close" } }
+          ]
+        },
+        {
+          "name": "Expiry retry",
+          "item": [
+            { "name": "Retry expiry item", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Manual retry through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/card-expiry-runs/{{expiry_run_id}}/items/{{expiry_item_id}}:retry", "description": "Solo issuer_operator. Reintenta manualmente un ítem elegible y devuelve 202 con el estado pending." } }
+          ]
         }
       ]
     }

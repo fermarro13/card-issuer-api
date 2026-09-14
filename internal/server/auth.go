@@ -33,11 +33,19 @@ func requestID(r *http.Request) string {
 	return value
 }
 
+// RequestID returns the trusted request identifier installed by the API middleware.
+func RequestID(r *http.Request) string { return requestID(r) }
+
 func writeProblem(w http.ResponseWriter, r *http.Request, status int, code, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(problem{Type: "urn:card-issuer-api:error:" + code, Title: http.StatusText(status), Status: status, Code: code, Detail: detail, RequestID: requestID(r)})
+}
+
+// WriteProblem is available to business handlers so every API failure has one shape.
+func WriteProblem(w http.ResponseWriter, r *http.Request, status int, code, detail string) {
+	writeProblem(w, r, status, code, detail)
 }
 
 func apiNotFound(w http.ResponseWriter, r *http.Request) {

@@ -57,6 +57,8 @@ services:
       AUTH_JWT_PRIVATE_KEY_B64: ${AUTH_JWT_PRIVATE_KEY_B64:-nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2DXWpgBgrEKt9VL/tPJZAc6DuFy89qmIyWvAhpo9wdRGg}
       AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-card-issuer-api}
       AUTH_JWT_AUDIENCE: ${AUTH_JWT_AUDIENCE:-card-issuer-api}
+      # POC-only public development cursor key; must never be used in production.
+      API_CURSOR_HMAC_KEY_B64: ${API_CURSOR_HMAC_KEY_B64:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     depends_on:

@@ -16,7 +16,7 @@ type Probe func(context.Context) error
 
 const ReadinessTimeout = 2 * time.Second
 
-func Handler(authProbe, control, shard Probe, authentication auth.API) http.Handler {
+func Handler(authProbe, control, shard Probe, authentication auth.API, business ...http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { respond(w, http.StatusOK, "ok") })
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +51,11 @@ func Handler(authProbe, control, shard Probe, authentication auth.API) http.Hand
 		mux.HandleFunc("/v1/auth/logout", authHandler.logout)
 		mux.HandleFunc("/v1/me", authHandler.me)
 		mux.HandleFunc("/v1/me/password", authHandler.password)
-		mux.HandleFunc("/v1/", apiNotFound)
+		if len(business) > 0 && business[0] != nil {
+			mux.Handle("/v1/", business[0])
+		} else {
+			mux.HandleFunc("/v1/", apiNotFound)
+		}
 	}
 	return withRequestID(mux)
 }
@@ -78,6 +82,9 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
+
+// WriteJSON applies the API's JSON and cache-control response conventions.
+func WriteJSON(w http.ResponseWriter, status int, value any) { writeJSON(w, status, value) }
 
 func Serve(ctx context.Context, listener net.Listener, handler http.Handler, logger *slog.Logger) error {
 	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}

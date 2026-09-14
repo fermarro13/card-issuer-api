@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 
 	"card-issuer-api/internal/auth"
 	"card-issuer-api/internal/database"
+	"card-issuer-api/internal/resource"
 	"card-issuer-api/internal/server"
 )
 
@@ -277,6 +279,93 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 		}
 		if strings.Contains(details, root) || strings.Contains(details, rotated) || strings.Contains(details, passwordToken) {
 			t.Fatal("authentication audit exposed a refresh token")
+		}
+	})
+	t.Run("public_resource_http_contract", func(t *testing.T) {
+		// The authentication scenario above disables this fixture intentionally.
+		// Re-enable it here to test the public API through the restricted runtime pools.
+		mustSQL(controlDB, "UPDATE control.users SET status='enabled' WHERE normalized_username='issuer_operator';")
+		signer, err := auth.NewSigner(ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize)), "integration", "card-issuer-api")
+		if err != nil {
+			t.Fatal(err)
+		}
+		service := auth.NewService(authPool, signer)
+		login, _, _, err := service.Login(ctx, "issuer_operator", "Test-Issuer-Operator!2026", "90000000-0000-4000-8000-000000000101")
+		if err != nil {
+			t.Fatal(err)
+		}
+		business := resource.New(service, authPool, control, shard, "shard_01", make([]byte, 32))
+		handler := server.Handler(authPool.Ping, control.Ping, shard.Ping, service, business)
+		request := func(method, path, body, key string) *httptest.ResponseRecorder {
+			r := httptest.NewRequest(method, path, strings.NewReader(body))
+			r.Header.Set("Authorization", "Bearer "+login.AccessToken)
+			if body != "" {
+				r.Header.Set("Content-Type", "application/json")
+			}
+			if key != "" {
+				r.Header.Set("Idempotency-Key", key)
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			return w
+		}
+		bank := request(http.MethodGet, "/v1/banks/10000000-0000-4000-8000-000000000001", "", "")
+		if bank.Code != http.StatusOK {
+			t.Fatalf("bank directory read: %d %s", bank.Code, bank.Body.String())
+		}
+		product := request(http.MethodPost, "/v1/banks/10000000-0000-4000-8000-000000000001/card-products", `{"product_code":"RESOURCE_TEST","name":"Resource Test","configuration":{}}`, "resource-product")
+		if product.Code != http.StatusCreated {
+			t.Fatalf("product create: %d %s", product.Code, product.Body.String())
+		}
+		client := request(http.MethodPost, "/v1/banks/10000000-0000-4000-8000-000000000001/clients", `{"external_client_ref":"resource-client","display_name":"Resource Client"}`, "resource-client")
+		if client.Code != http.StatusCreated {
+			t.Fatalf("client create: %d %s", client.Code, client.Body.String())
+		}
+		id := func(body string) string {
+			var v map[string]any
+			if err := json.Unmarshal([]byte(body), &v); err != nil {
+				t.Fatal(err)
+			}
+			value, _ := v["id"].(string)
+			if value == "" {
+				t.Fatalf("missing id: %s", body)
+			}
+			return value
+		}
+		productID, clientID := id(product.Body.String()), id(client.Body.String())
+		account := request(http.MethodPost, "/v1/banks/10000000-0000-4000-8000-000000000001/account-references", `{"client_id":"`+clientID+`","external_account_ref":"resource-account"}`, "resource-account")
+		if account.Code != http.StatusCreated {
+			t.Fatalf("account create: %d %s", account.Code, account.Body.String())
+		}
+		accountID := id(account.Body.String())
+		issued := request(http.MethodPost, "/v1/banks/10000000-0000-4000-8000-000000000001/cards", `{"client_id":"`+clientID+`","account_reference_id":"`+accountID+`","product_id":"`+productID+`","reason":"resource test"}`, "resource-issue")
+		if issued.Code != http.StatusCreated || strings.Contains(issued.Body.String(), "credential_reference") {
+			t.Fatalf("issue response: %d %s", issued.Code, issued.Body.String())
+		}
+		var issue map[string]map[string]any
+		if err := json.Unmarshal(issued.Body.Bytes(), &issue); err != nil {
+			t.Fatal(err)
+		}
+		cardID, _ := issue["card"]["id"].(string)
+		if cardID == "" {
+			t.Fatalf("missing issued card: %s", issued.Body.String())
+		}
+		activated := request(http.MethodPost, "/v1/banks/10000000-0000-4000-8000-000000000001/cards/"+cardID+":activate", `{"reason":"resource activation"}`, "resource-activate")
+		if activated.Code != http.StatusOK {
+			t.Fatalf("activate: %d %s", activated.Code, activated.Body.String())
+		}
+		readonly, _, _, err := service.Login(ctx, "issuer_readonly", "Test-Issuer-Readonly!2026", "90000000-0000-4000-8000-000000000102")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest(http.MethodPost, "/v1/banks/10000000-0000-4000-8000-000000000001/cards/"+cardID+":suspend", strings.NewReader(`{"reason":"denied"}`))
+		r.Header.Set("Authorization", "Bearer "+readonly.AccessToken)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Idempotency-Key", "readonly-denied")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("readonly mutation: %d %s", w.Code, w.Body.String())
 		}
 	})
 	t.Run("live_readiness_outage_recovery", func(t *testing.T) {

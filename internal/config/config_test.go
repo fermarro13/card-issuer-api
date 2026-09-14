@@ -55,6 +55,7 @@ func validValues() map[string]string {
 		"CONTROL_DB_PASSWORD": "control", "AUTH_DB_PASSWORD": "auth", "SHARD_DB_PASSWORD": "shard",
 		"AUTH_JWT_PRIVATE_KEY_B64": base64.RawStdEncoding.EncodeToString(ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))),
 		"AUTH_JWT_ISSUER":          "issuer", "AUTH_JWT_AUDIENCE": "audience",
+		"API_CURSOR_HMAC_KEY_B64": base64.RawStdEncoding.EncodeToString(make([]byte, 32)),
 	}
 }
 

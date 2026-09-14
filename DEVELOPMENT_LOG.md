@@ -1,5 +1,17 @@
 # Development Log
 
+## 2026-09-13 — PUBLIC-RESOURCE-API-001: Public resource and card command API
+
+- User · Scope: Implement the public resource API, card lifecycle commands, and manual expiry-item retry described in the approved plan.
+- User · Decisions: Use a resumable bank-provisioning saga, seven-day idempotency replay, stable external keys, active/suspended-only replacement with one outstanding successor, one configured shard, and no issuer-operator continuity guard.
+- Orchestrator · Plan: [Public Resource and Card Command API](docs/plans/2026-09-13-public-resource-api.md).
+- Architect · Gate: APPROVED. Required boundaries: append-only migrations, auth-runtime-only control writes, authenticated active-route resolution, transaction-local tenant context, resumable provisioning, and sanitized durable idempotency replay.
+- Implementation · Delivered: control/shard `002` migrations; authenticated resource routes; cursor signing; tenant-scoped repositories; bank provisioning; user/reference administration; card issue/lifecycle/replacement; and manual expiry retry.
+- Automated tests · Evidence: `go version` reported Go 1.27.1; `go test ./...`, `go vet ./...`, standalone database tests, and `git diff --check` passed. An isolated password-enforcing PostgreSQL 17 run passed `CI_TEST_DATABASE=1 go test -count=1 -v ./internal/integration`, including the public-resource HTTP contract.
+- Security · Gate: APPROVED. Re-reviewed target/actor-bound idempotency, resumable bank PATCH, tenant isolation, parameterization, privilege boundaries, and secret exclusion.
+- QA · Gate: BLOCKED. The API integration path passes, but required coverage for the remaining resource/staff/provisioning/idempotency/lifecycle/manual-retry matrix is incomplete.
+- Orchestrator · Status: Implementation delivered; closeout blocked by the QA coverage gate.
+
 ## 2026-09-10 — DB-SCRIPTS-001: PostgreSQL creation scripts
 
 - User · Scope: Implement the approved full PostgreSQL 17 schema, versioned runner, separate test seeds, four application roles, and verified testing credentials.

@@ -13,6 +13,7 @@ import (
 	"card-issuer-api/internal/auth"
 	"card-issuer-api/internal/config"
 	"card-issuer-api/internal/database"
+	"card-issuer-api/internal/resource"
 	"card-issuer-api/internal/server"
 )
 
@@ -63,7 +64,9 @@ func run(logger *slog.Logger) int {
 		return 1
 	}
 	logger.Info("HTTP server started", "address", listener.Addr().String())
-	if err := server.Serve(ctx, listener, server.Handler(authPool.Ping, control.Ping, shard.Ping, auth.NewService(authPool, signer)), logger); err != nil {
+	authentication := auth.NewService(authPool, signer)
+	business := resource.New(authentication, authPool, control, shard, cfg.ShardID, cfg.CursorKey)
+	if err := server.Serve(ctx, listener, server.Handler(authPool.Ping, control.Ping, shard.Ping, authentication, business), logger); err != nil {
 		logger.Error("HTTP server stopped unexpectedly")
 		return 1
 	}

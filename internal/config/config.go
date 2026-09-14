@@ -16,6 +16,8 @@ type Config struct {
 	AuthURL       string
 	ControlURL    string
 	ShardURL      string
+	ShardID       string
+	CursorKey     []byte
 	JWTPrivateKey ed25519.PrivateKey
 	JWTIssuer     string
 	JWTAudience   string
@@ -68,6 +70,17 @@ func load(getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	shardID := value("SHARD_ID", "shard_01")
+	if shardID == "" || len(shardID) > 63 {
+		return Config{}, errors.New("invalid SHARD_ID")
+	}
+	cursorKey, err := base64.RawStdEncoding.DecodeString(getenv("API_CURSOR_HMAC_KEY_B64"))
+	if err != nil {
+		cursorKey, err = base64.StdEncoding.DecodeString(getenv("API_CURSOR_HMAC_KEY_B64"))
+	}
+	if err != nil || len(cursorKey) < 32 {
+		return Config{}, errors.New("invalid API_CURSOR_HMAC_KEY_B64")
+	}
 	privateKey, err := base64.RawStdEncoding.DecodeString(getenv("AUTH_JWT_PRIVATE_KEY_B64"))
 	if err != nil {
 		privateKey, err = base64.StdEncoding.DecodeString(getenv("AUTH_JWT_PRIVATE_KEY_B64"))
@@ -80,5 +93,5 @@ func load(getenv func(string) string) (Config, error) {
 	if issuer == "" || audience == "" {
 		return Config{}, errors.New("AUTH_JWT_ISSUER and AUTH_JWT_AUDIENCE are required")
 	}
-	return Config{HTTPAddress: address, AuthURL: auth, ControlURL: control, ShardURL: shard, JWTPrivateKey: ed25519.PrivateKey(privateKey), JWTIssuer: issuer, JWTAudience: audience}, nil
+	return Config{HTTPAddress: address, AuthURL: auth, ControlURL: control, ShardURL: shard, ShardID: shardID, CursorKey: cursorKey, JWTPrivateKey: ed25519.PrivateKey(privateKey), JWTIssuer: issuer, JWTAudience: audience}, nil
 }
