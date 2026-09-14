@@ -206,7 +206,7 @@ func TestDatabaseIntegration(t *testing.T) {
 		h.equal(h.control, "SELECT count(*) FROM control.users;", "4")
 		h.equal(h.control, "SELECT count(*) FROM control.users WHERE status='enabled' AND normalized_username=role AND ((role LIKE 'bank_%')=(entity_id IS NOT NULL));", "4")
 		h.equal(h.control, "SELECT count(*) FROM control.auth_sessions;", "0")
-		h.equal(h.shard, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON c.relnamespace=n.oid WHERE n.nspname='bank' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity;", "12")
+		h.equal(h.shard, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON c.relnamespace=n.oid WHERE n.nspname='bank' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity;", "14")
 		h.equal(h.control, "SELECT count(*) FROM pg_tables WHERE schemaname='control';", "5")
 		h.equal(h.control, "SELECT count(*) FROM pg_roles WHERE rolname IN ('ci_owner','ci_auth_runtime','ci_routing_reader','ci_business_runtime') AND NOT (rolcanlogin OR rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb);", "4")
 	})
@@ -338,10 +338,58 @@ func TestDatabaseIntegration(t *testing.T) {
 	t.Run("atomic_database_rollback", func(t *testing.T) {
 		h := h
 		h.t = t
-		h.reject(h.shard, "BEGIN; SET LOCAL ROLE ci_business_runtime; SET LOCAL app.entity_id='10000000-0000-4000-8000-000000000001'; UPDATE bank.cards SET status='active',version=version+1 WHERE id='60000000-0000-4000-8000-000000000001'; UPDATE bank.card_status_batches SET status='succeeded'; UPDATE bank.card_operations SET status='succeeded'; INSERT INTO bank.card_status_batch_items(entity_id,batch_id,card_id,operation_id,previous_status,outcome) VALUES ('10000000-0000-4000-8000-000000000001','80000000-0000-4000-8000-000000000001','60000000-0000-4000-8000-000000000001','70000000-0000-4000-8000-000000000001','issued','applied'); UPDATE bank.cards SET status='invalid'; COMMIT;", "23514")
+		h.reject(h.shard, "BEGIN; SET LOCAL ROLE ci_business_runtime; SET LOCAL app.entity_id='10000000-0000-4000-8000-000000000001'; UPDATE bank.cards SET status='active',version=version+1 WHERE id='60000000-0000-4000-8000-000000000001'; UPDATE bank.cards SET status='invalid'; COMMIT;", "23514")
 		h.equal(h.shard, "SELECT status||':'||version FROM bank.cards WHERE id='60000000-0000-4000-8000-000000000001';", "issued:1")
-		h.equal(h.shard, "SELECT status FROM bank.card_status_batches;", "queued")
+		h.equal(h.shard, "SELECT status FROM bank.card_status_batches;", "draft")
 		h.equal(h.shard, "SELECT status FROM bank.card_operations;", "queued")
 		h.equal(h.shard, "SELECT count(*) FROM bank.card_status_batch_items;", "0")
+	})
+	t.Run("batch_drafts_and_individual_expiry_runs", func(t *testing.T) {
+		h := h
+		h.t = t
+		entity := "10000000-0000-4000-8000-000000000001"
+		user := "20000000-0000-4000-8000-000000000001"
+		card := "60000000-0000-4000-8000-000000000002"
+		batch := "81000000-0000-4000-8000-000000000001"
+		retryBatch := "81000000-0000-4000-8000-000000000002"
+		operation := "71000000-0000-4000-8000-000000000002"
+		expiryOperation := "71000000-0000-4000-8000-000000000003"
+		expiryRun := "82000000-0000-4000-8000-000000000001"
+		expiryItem := "83000000-0000-4000-8000-000000000001"
+		setup := "BEGIN; SET LOCAL ROLE ci_business_runtime; SET LOCAL app.entity_id='" + entity + "'; " +
+			"INSERT INTO bank.idempotency_records(entity_id,id,operation_scope,idempotency_key,request_fingerprint,expires_at,created_by,updated_by) VALUES " +
+			"('" + entity + "','91000000-0000-4000-8000-000000000001','status_batch','draft-key',decode(repeat('02',32),'hex'),now()+interval '1 day','" + user + "','" + user + "')," +
+			"('" + entity + "','91000000-0000-4000-8000-000000000002','status_batch','retry-key',decode(repeat('03',32),'hex'),now()+interval '1 day','" + user + "','" + user + "'); " +
+			"INSERT INTO bank.card_status_batches(entity_id,id,target_status,reason,requested_by,requester_role,request_id,idempotency_record_id,status,item_count,created_by,updated_by) VALUES " +
+			"('" + entity + "','" + batch + "','suspended','test retry','" + user + "','issuer_operator',gen_random_uuid(),'91000000-0000-4000-8000-000000000001','draft',1,'" + user + "','" + user + "'); " +
+			"INSERT INTO bank.card_operations(entity_id,id,card_id,action,reason,actor_user_id,actor_role,request_id,created_by,updated_by) VALUES " +
+			"('" + entity + "','" + operation + "','" + card + "','suspend','test','" + user + "','issuer_operator',gen_random_uuid(),'" + user + "','" + user + "'); " +
+			"INSERT INTO bank.card_status_batch_items(entity_id,batch_id,card_id,operation_id) VALUES " +
+			"('" + entity + "','" + batch + "','" + card + "','" + operation + "'); " +
+			"UPDATE bank.card_status_batches SET status='queued' WHERE id='" + batch + "'; " +
+			"UPDATE bank.card_status_batches SET status='cancelled',completed_at=now() WHERE id='" + batch + "'; " +
+			"INSERT INTO bank.card_status_batches(entity_id,id,target_status,reason,requested_by,requester_role,request_id,idempotency_record_id,status,item_count,retry_of_batch_id,created_by,updated_by) VALUES " +
+			"('" + entity + "','" + retryBatch + "','suspended','test retry','" + user + "','issuer_operator',gen_random_uuid(),'91000000-0000-4000-8000-000000000002','draft',1,'" + batch + "','" + user + "','" + user + "'); " +
+			"INSERT INTO bank.card_operations(entity_id,id,card_id,action,reason,actor_role,executor_identity,request_id) VALUES " +
+			"('" + entity + "','" + expiryOperation + "','" + card + "','expire','daily expiry','system','test-expiry-worker',gen_random_uuid()); " +
+			"INSERT INTO bank.card_expiry_runs(entity_id,id,run_date,executor_identity,item_count) VALUES " +
+			"('" + entity + "','" + expiryRun + "',CURRENT_DATE,'test-expiry-worker',1); " +
+			"INSERT INTO bank.card_expiry_run_items(entity_id,id,expiry_run_id,card_id,operation_id) VALUES " +
+			"('" + entity + "','" + expiryItem + "','" + expiryRun + "','" + card + "','" + expiryOperation + "'); " +
+			"UPDATE bank.card_expiry_run_items SET status='processing',lease_owner='worker',lease_expires_at=now()+interval '1 minute',lease_version=1 WHERE id='" + expiryItem + "'; " +
+			"UPDATE bank.card_expiry_run_items SET status='pending',lease_owner=NULL,lease_expires_at=NULL,attempt_count=1,automatic_retry_count=1 WHERE id='" + expiryItem + "'; " +
+			"UPDATE bank.card_expiry_run_items SET status='processing',lease_owner='worker',lease_expires_at=now()+interval '1 minute',lease_version=2 WHERE id='" + expiryItem + "'; " +
+			"UPDATE bank.card_expiry_run_items SET status='pending',lease_owner=NULL,lease_expires_at=NULL,attempt_count=2,automatic_retry_count=2 WHERE id='" + expiryItem + "'; " +
+			"UPDATE bank.card_expiry_run_items SET status='processing',lease_owner='worker',lease_expires_at=now()+interval '1 minute',lease_version=3 WHERE id='" + expiryItem + "'; " +
+			"UPDATE bank.card_expiry_run_items SET status='pending',lease_owner=NULL,lease_expires_at=NULL,attempt_count=3,automatic_retry_count=3 WHERE id='" + expiryItem + "'; " +
+			"UPDATE bank.card_expiry_run_items SET status='processing',lease_owner='worker',lease_expires_at=now()+interval '1 minute',lease_version=4 WHERE id='" + expiryItem + "'; " +
+			"UPDATE bank.card_expiry_run_items SET status='manual_retry_required',lease_owner=NULL,lease_expires_at=NULL,attempt_count=4,failure_code='transient' WHERE id='" + expiryItem + "'; COMMIT;"
+		h.must(h.shard, setup)
+		h.reject(h.shard, "BEGIN; SET LOCAL ROLE ci_business_runtime; SET LOCAL app.entity_id='"+entity+"'; UPDATE bank.cards SET status='expired' WHERE id='"+card+"'; UPDATE bank.card_expiry_run_items SET status='pending',manual_retry_count=1,manual_retry_by='"+user+"',manual_retry_at=now() WHERE id='"+expiryItem+"'; COMMIT;", "P0001")
+		h.must(h.shard, "BEGIN; SET LOCAL ROLE ci_business_runtime; SET LOCAL app.entity_id='"+entity+"'; UPDATE bank.card_expiry_run_items SET status='pending',manual_retry_count=1,manual_retry_by='"+user+"',manual_retry_at=now() WHERE id='"+expiryItem+"'; UPDATE bank.cards SET status='expired' WHERE id='"+card+"'; COMMIT;")
+		h.equal(h.shard, "SELECT status||':'||attempt_count||':'||automatic_retry_count||':'||manual_retry_count FROM bank.card_expiry_run_items WHERE id='"+expiryItem+"';", "pending:4:3:1")
+		h.reject(h.shard, "BEGIN; SET LOCAL ROLE ci_business_runtime; SET LOCAL app.entity_id='"+entity+"'; UPDATE bank.card_expiry_run_items SET status='processing',lease_owner='worker',lease_expires_at=now()+interval '1 minute',lease_version=5 WHERE id='"+expiryItem+"'; COMMIT;", "P0001")
+		h.must(h.shard, "BEGIN; SET LOCAL ROLE ci_business_runtime; SET LOCAL app.entity_id='"+entity+"'; UPDATE bank.card_expiry_run_items SET status='skipped_already_expired' WHERE id='"+expiryItem+"'; UPDATE bank.card_expiry_runs SET skipped_already_expired_count=1,status='completed',completed_at=now() WHERE id='"+expiryRun+"'; COMMIT;")
+		h.equal(h.shard, "SELECT status FROM bank.card_expiry_runs WHERE id='"+expiryRun+"';", "completed")
 	})
 }

@@ -43,12 +43,14 @@ The attributes below describe required information. Exact column types, lengths,
 | **Client** | An individual customer belonging to one bank. | Entity ID, client ID, external customer reference, necessary customer information, timestamps. |
 | **Account Reference** | Relationship to an account maintained by the bank. | Entity ID, reference ID, client ID, external account reference, timestamps. |
 | **Card Product** | A bank-owned offering and issuance configuration. | Entity ID, product ID, product code, name, operational status, configuration. |
-| **Card** | One pending or issued card credential. | Entity ID, card ID, client ID, account-reference ID, product ID, current status, opaque credential reference, optional predecessor-card ID, lifecycle dates, version. |
+| **Card** | One locally issued card credential. | Entity ID, card ID, client ID, account-reference ID, product ID, current status, opaque credential reference, optional predecessor-card ID, lifecycle dates, version. |
 | **Card Operation** | One logical lifecycle action and its execution outcome. | Entity ID, operation ID, card ID, action, execution status, reason, actor, correlation ID, timestamps, sanitized failure details. |
 | **Card Status History** | A confirmed card-state transition. | Entity ID, history ID, card ID, operation ID, previous/new status, reason, actor, timestamp. |
 | **Audit Event** | Bank-scoped business changes and rejected business operations. | Entity ID, event ID, actor ID and role/context snapshot, action, resource type/ID, outcome, correlation ID, timestamp, selected change details. |
-| **Card Status Batch** | One request to transition a bank's selected cards to a common status. | Entity ID, batch ID, target status, requester, reason, submission identity, execution state, lease/retry information, timestamps, failure summary. |
-| **Card Status Batch Item** | One card and its operation within a batch. | Entity ID, item ID, batch ID, card ID, operation ID, confirmed previous status, outcome, safe failure code. |
+| **Card Status Batch** | One request to transition a bank's selected cards to a common status. | Entity ID, batch ID, target status, requester, reason, submission identity, execution state, applied/ignored counts, linked retry source, lease/retry information, timestamps, failure summary. |
+| **Card Status Batch Item** | One card and its operation within a batch. | Entity ID, item ID, batch ID, card ID, operation ID, confirmed previous status, applied/not-applied/ignored outcome, safe failure code. |
+| **Card Expiry Run** | One system-owned daily expiration batch. | Entity ID, run ID, UTC run date, timestamps, aggregate counts. |
+| **Card Expiry Run Item** | One independently processed card in an expiry run. | Entity ID, item ID, run ID, card ID, system `expire` operation ID, individual outcome, attempt count, safe failure code. |
 | **Idempotency Record** | Deduplicate retried commands within one bank and operation scope. | Entity ID, record ID, operation scope, key, request fingerprint, processing state, result reference, expiry. |
 | **Outbox Message** | Reliably dispatch work resulting from a committed transaction. | Entity ID, message ID, work type, operation or batch reference, minimal payload, processing state, attempts, next-attempt time, timestamps. |
 | **User** | Central allowed staff login, separate from Client. | ID, unique normalized username, password hash, one role, bank assignment where required, status, auth version, timestamps and actors. |
@@ -56,7 +58,7 @@ The attributes below describe required information. Exact column types, lengths,
 | **Refresh Token** | Central single-use refresh credential represented by a hash. | ID, session ID, unique token hash, optional parent token ID, issue/expiry/consumption times. |
 | **Authentication Audit Event** | Central authentication and user-administration evidence. | ID, event type, outcome, optional actor/subject user IDs, optional bank context, session reference, request correlation, timestamp, sanitized details. |
 
-The first twelve entities reside on the bank's data shard. The four authentication entities reside in the control database and follow the central-key rules in Section 9 rather than the bank-child primary-key convention.
+The first fourteen entities reside on the bank's data shard. The four authentication entities reside in the control database and follow the central-key rules in Section 9 rather than the bank-child primary-key convention.
 
 ### 3.1. Relationships
 
@@ -85,13 +87,13 @@ The bank remains authoritative for the account and its financial activity. This 
 
 ### 3.3. Card lifecycle and operations
 
-A card exists as a pending record before issuance completes. **Card state and operation execution state are separate.** A failed activation operation leaves the last confirmed card state unchanged. Infrastructure retries reuse the same logical operation.
+A local issue or replacement command creates an `issued` card synchronously; the internal `pending` state is not exposed as a durable result of that command. **Card state and operation execution state are separate.** A failed activation operation leaves the last confirmed card state unchanged. Infrastructure retries reuse the same logical operation.
 
-Replacement creates a new Card linked to its predecessor. The old card keeps its identity and history. Batch status updates use the same centrally validated lifecycle rules as individual card operations; replacement and credential issuance are not implicit status-only batch actions.
+Replacement creates a new issued Card linked to its predecessor. The old card keeps its identity and history until activation of the successor closes it. Batch status updates use the same centrally validated lifecycle rules as individual card operations; replacement and issuance are not implicit status-only batch actions.
 
-Credential generation, storage, and cryptographic operations belong behind a separately designed vault/service boundary. Business records store opaque references. PAN, CVV, secrets, and credentials must not appear in ordinary responses, URLs, logs, audit payloads, examples, or fixtures.
+For v1, local issuance generates only a non-secret opaque credential reference. PAN, CVV, secrets, credentials, and provider-like responses must not appear in ordinary responses, URLs, logs, audit payloads, examples, or fixtures. A future credential provider, vault, or cryptographic service requires a separately designed integration boundary.
 
-The precise state machine, already-at-target behavior, and transitions requiring credential-service confirmation are open implementation decisions. No worker may invent or bypass those rules.
+The precise state machine and already-at-target behavior are open implementation decisions. No worker may invent or bypass those rules; remote-confirmation behavior is deferred until a credential-provider integration is designed.
 
 ## 4. Keys, integrity, and audit
 
@@ -112,7 +114,7 @@ Owners and privileged roles can bypass RLS, making role configuration part of th
 
 Mutable business records carry creation/update timestamps and actor references. Use UTC instants, represented by PostgreSQL `timestamptz`, for event and lifecycle timestamps.
 
-Commit successful business changes, confirmed status history, successful-change audit events, and related outbox messages together. Ordinary reads use current Card state rather than reconstructing it from history. Audit and status-history records are append-only to the application.
+Commit successful business changes, confirmed status history, successful-change audit events, and any applicable outbox messages together. Local issue/replacement commands also co-commit their issued card, succeeded operation, generated opaque reference, status history, audit evidence, and idempotency result. Ordinary reads use current Card state rather than reconstructing it from history. Audit and status-history records are append-only to the application.
 
 Record selected changes and necessary context, not full copies of customer records. Failed and rejected actions require a path that survives rollback. Authentication and user-administration events use the restricted central Authentication Audit Event table, including events before trustworthy bank identification; a caller-supplied bank identifier does not establish tenant ownership.
 
@@ -122,9 +124,9 @@ Application append-only permissions do not make records tamper-proof against adm
 
 ### 4.3. Database atomicity versus service effects
 
-An outbox makes committed work discoverable but does not make a remote service part of the PostgreSQL transaction or guarantee exactly-once delivery. Consumers must deduplicate and reconcile uncertain outcomes.
+An outbox makes committed future integration work discoverable but does not make a remote service part of the PostgreSQL transaction or guarantee exactly-once delivery. Consumers must deduplicate and reconcile uncertain outcomes. V1 local issue/replacement creates no outbox work.
 
-The atomic batch guarantee covers local card states and associated database records. A successful batch result reports that database outcome; it must not imply unconfirmed credential-service or network effects. Track delivery separately through the outbox and associated operation records.
+The atomic batch guarantee covers local card states and associated database records. A successful batch result reports that database outcome; it does not imply any future network effect. Track future delivery separately through the outbox and associated operation records.
 
 If a transition's meaning requires remote confirmation before the card can assume that state, it must not run through the database-only batch path until the confirmation/orchestration contract is defined. Sequential remote calls cannot be made all-or-nothing by rolling back local SQL.
 
@@ -139,7 +141,6 @@ erDiagram
     CARD ||--o{ CARD_STATUS_BATCH_ITEM : targeted_by
     CARD_STATUS_BATCH_ITEM o|--|| CARD_OPERATION : tracks
     CARD_OPERATION ||--o{ CARD_STATUS_HISTORY : produces
-    CARD_STATUS_BATCH ||--o{ OUTBOX_MESSAGE : schedules
 ```
 
 Every accepted item has exactly one logical Card Operation; standalone operations need not belong to a batch. Each batch contains at least one item and requests one common target status. Accepted membership, target status, and reason are immutable. Changing them creates a new batch.
@@ -166,7 +167,7 @@ Every accepted item has exactly one logical Card Operation; standalone operation
 | `entity_id`, `id`, `batch_id` | Ownership, item identity, and parent batch. |
 | `card_id`, `operation_id` | Target card and associated logical operation. |
 | `previous_status` | State immediately before a successful change; populated only on successful application. |
-| `outcome` | `pending`, `applied`, or `not_applied`. |
+| `outcome` | `pending`, `applied`, `not_applied`, or `ignored`; only an applied item records `previous_status`. |
 | `failure_code` | Optional safe item-specific failure explanation. |
 
 The target status stays on the header; it is not duplicated on each item. A history record contains the actual previous/new states after a successful transition.
@@ -178,16 +179,16 @@ The target status stays on the header; it is not duplicated on each item. A hist
 - Unique `(entity_id, operation_id)` prevents reusing one operation for multiple items.
 - Enforce that the associated operation targets the item's card, using a composite reference including card ID.
 - Validate `item_count` against the immutable accepted membership during submission and processing. Cross-row counts are not ordinary row-level check constraints.
-- A successful batch has all items `applied`; a terminal failed batch has all items `not_applied` and zero committed card updates from that batch. Partial success is unsupported.
+- A successful batch has every item `applied` or `ignored`, and header applied/ignored counts must equal the item outcomes. A terminal failed batch has only `not_applied` or already identified `ignored` items, zero applied count, and zero committed card updates from that batch. Partial success is unsupported.
 - Update item outcomes, related operation outcomes, and the batch result consistently within the applicable success or failure transaction.
 
 ### 5.3. Submission and execution
 
 1. **Validate admission.** Validate the access JWT, authorize its role for the requested action and target bank, and establish tenant context. Validate target status, nonempty membership, and the configured size limit. Reject duplicate cards and identifiers that are not accessible within the bank. Do not disclose whether an inaccessible card exists elsewhere.
-2. **Persist acceptance.** In one transaction, create the queued batch, its items and queued operations, submission audit, idempotency record, and outbox notification. Return the batch ID only after acceptance commits. Invalid admission does not create a partly populated batch; record the rejected request through the appropriate audit path.
-3. **Claim work.** A worker atomically claims eligible queued work with a bounded lease and fencing generation. Duplicate notifications do not grant concurrent ownership. Schedule banks fairly.
+2. **Persist acceptance.** In one transaction, create the immutable `draft` batch, its pending items and queued operations, submission audit, and idempotency record. Return the batch ID only after acceptance commits. Invalid admission does not create a partly populated batch; record the rejected request through the appropriate audit path. The separate execute command validates the exact persisted membership and changes the draft to `queued`.
+3. **Claim work.** A worker atomically claims eligible queued work with a bounded lease and fencing generation. Duplicate claim attempts do not grant concurrent ownership. Schedule banks fairly.
 4. **Authorize, lock, and revalidate.** Before each execution attempt, read the submitter's current enabled state, role, and bank assignment from central authentication as described in Section 9.6. Fail unauthorized work without card changes; defer if that check is unavailable. After a successful check, start the shard execution transaction, lock the batch, verify worker ownership and bank eligibility, then lock affected cards in deterministic ID order. Validate transitions against current card states. Submission-time checks do not justify a stale transition.
-5. **Commit success.** Apply every card update, version change, operation outcome, item outcome, status-history entry, successful-change audit, related outbox message, and the batch's `succeeded` result in this same transaction.
+5. **Commit success.** Apply every card update, version change, operation outcome, item outcome, status-history entry, successful-change audit, and the batch's `succeeded` result in this same transaction.
 6. **Handle failure.** Roll back all card effects when any item cannot transition. For a terminal failure, use a subsequent guarded transaction to mark the batch `failed`, its items `not_applied`, its operations unsuccessful, and append failure audit evidence. Diagnostic failures on one item must not imply that other items applied.
 
 Submission and failure records may remain committed even though no card update committed. That is deliberate auditability, not partial application of the batch.
@@ -204,11 +205,17 @@ If the connection drops during commit, inspect the persisted result before retry
 
 Idempotency is bank- and operation-scoped. Repeating a key with the same normalized target status, membership, and relevant request fields returns the existing batch; a different request conflicts. Canonicalize membership for fingerprinting so merely reordering the same card IDs does not change its meaning. Active work must not lose its idempotency record to cleanup.
 
-### 5.5. Size and shard boundaries
+### 5.5. Daily expiry runs
+
+Public card-status batches remain atomic. Daily expiry is a separate system-owned run that starts at `00:00` UTC and creates one item for each due eligible card. Each item transitions its card in an independent transaction, so an expiry run may have a mix of `expired`, `skipped_already_expired`, and `manual_retry_required` item outcomes.
+
+An item gets one initial attempt and up to three automatic retries. Before every retry, the worker locks and rereads the card: it retries only a card that is still not expired; otherwise it records `skipped_already_expired` and stops. After the third retry fails, the item's transaction is rolled back and its result becomes `manual_retry_required` with a sanitized failure code. Only an `issuer_operator` may queue that individual item again through the normal idempotent, audited manual-retry API command, and selection rejects a card that has already expired. A manual failure returns it to `manual_retry_required` without restarting automatic retries. The scheduler never retries that item automatically again.
+
+### 5.6. Size and shard boundaries
 
 Use a configurable maximum item count, selected by load testing. Do not silently divide one accepted atomic batch into separately committed chunks. Larger workflows may submit multiple explicitly independent batches, each with its own result.
 
-Batch headers, items, operations, bank-scoped audits, business idempotency, and outbox reside with their bank's cards. Staff users, authentication sessions/tokens, and authentication audits remain central. Bank relocation pauses batch workers and drains in-flight transactions before cutover.
+Batch headers, items, operations, bank-scoped audits, business idempotency, and the available future-integration outbox reside with their bank's cards. Staff users, authentication sessions/tokens, and authentication audits remain central. Bank relocation pauses batch workers and drains in-flight transactions before cutover.
 
 ## 6. Indexes and access patterns
 
@@ -236,7 +243,7 @@ Bank-scoped B-tree indexes begin with `entity_id`, followed by relevant equality
 | Retrieve batch items | Reuse unique `(entity_id, batch_id, card_id)` |
 | Find batches affecting a card | Batch items: `(entity_id, card_id, batch_id)` |
 
-Outbox workers use a partial index over unfinished work ordered by bank, eligibility time, and message ID. Tenant-first worker indexes assume that the scheduler chooses a bank before selecting its work. A future global scheduler would need an independently reviewed access and authorization design.
+If a future integration enables outbox workers, use a partial index over unfinished work ordered by bank, eligibility time, and message ID. Tenant-first worker indexes assume that the scheduler chooses a bank before selecting its work. A future global scheduler would need an independently reviewed access and authorization design.
 
 The table lists access indexes, not every helper index required by foreign keys. Reuse indexes created by primary/unique constraints, including the batch item operation uniqueness and account relationship key; do not create identical nonunique copies. Add cleanup or JSON indexes only for demonstrated workloads. Every index adds storage and write maintenance. [PostgreSQL unique indexes](https://www.postgresql.org/docs/current/indexes-unique.html)
 
@@ -262,7 +269,7 @@ Use an explicit mapping rather than a direct hash modulo the current shard count
 
 - Resolve the trusted bank before beginning a business transaction. Pin each request/transaction to that placement.
 - For bank roles, use the verified JWT bank assignment and reject conflicting request selectors. For issuer roles, authorize explicit bank selection using verified role claims and validate the directory entry before establishing tenant context. Never treat a raw selector as authoritative or pass a wildcard tenant to repositories.
-- Use the same resolver for batch workers and outbox consumers. Neither request bodies nor message payloads may override authorized routing.
+- Use the same resolver for batch workers and any future outbox consumers. Neither request bodies nor message payloads may override authorized routing.
 - Fail closed for missing/unavailable placement; never search another shard or silently fall back to a default.
 - Bound connection pools per active shard and impose an overall connection budget per application instance, including headroom for workers and operations.
 - Keep shard identity out of public IDs, URLs, and business contracts. Retain tenant-scoped queries, RLS, and constraints on every shard.
@@ -274,7 +281,7 @@ Introduce additional data shards when a tuned primary cannot meet measured requi
 
 A future relocation feature must pause the bank's writes and workers, drain in-flight transactions, copy and validate its complete dataset, fence source access, update placement, invalidate stale routing, and resume on the destination. Stale requests must fail rather than read or mutate a retired copy. Establish a controlled read pause during cutover unless a separately validated read-routing protocol is provided.
 
-Validate counts and relationships, including operations, batches, audits, idempotency, and pending outbox work. Reconcile in-flight remote effects before resuming. Rollback must preserve a single writable location and must account for any writes already accepted at the destination. Relocation tooling and recovery rehearsal are separate implementation work.
+Validate counts and relationships, including operations, batches, audits, idempotency, and any future pending outbox work. Reconcile in-flight remote effects before resuming only when an integration exists. Rollback must preserve a single writable location and must account for any writes already accepted at the destination. Relocation tooling and recovery rehearsal are separate implementation work.
 
 This strategy scales across banks. One bank must still fit within its assigned shard; splitting an individual bank across shards is outside the design.
 
@@ -282,9 +289,9 @@ This strategy scales across banks. One bank must still fit within its assigned s
 
 Thousands of records per bank do not alone justify multiple shards. Combined traffic, row size, working-set size, contention, history growth, and maintenance cost determine capacity.
 
-Start with short transactions, query timeouts, bounded pools, and per-bank request/worker concurrency limits. Monitor throughput, p95/p99 latency, errors, lock/pool waits, CPU, I/O, table/index growth, outbox backlog, and queued-batch age/retries. A busy bank must not indefinitely starve others.
+Start with short transactions, query timeouts, bounded pools, and per-bank request/worker concurrency limits. Monitor throughput, p95/p99 latency, errors, lock/pool waits, CPU, I/O, table/index growth, queued-batch age/retries, and any future outbox backlog. A busy bank must not indefinitely starve others.
 
-Use `pg_stat_statements` to find expensive query patterns and maintain autovacuum and planner statistics, especially for frequently updated cards, batches, operations, and outbox records. Tune queries and primary capacity before adding distributed storage. [Query statistics](https://www.postgresql.org/docs/current/pgstatstatements.html), [database maintenance](https://www.postgresql.org/docs/current/routine-vacuuming.html)
+Use `pg_stat_statements` to find expensive query patterns and maintain autovacuum and planner statistics, especially for frequently updated cards, batches, and operations; include outbox records only when a future integration uses them. Tune queries and primary capacity before adding distributed storage. [Query statistics](https://www.postgresql.org/docs/current/pgstatstatements.html), [database maintenance](https://www.postgresql.org/docs/current/routine-vacuuming.html)
 
 ### Partitioning
 
@@ -433,9 +440,10 @@ Use a provisional benchmark of **100 banks × 10,000 cards**, corresponding clie
 - Same-key/same-request submission returns the original batch; changed target or membership conflicts.
 - Concurrent overlapping batches and individual updates preserve centrally defined transitions.
 - Worker interruption before commit leaves no partial changes; failure-audit interruption is recoverable.
-- Duplicate notifications, expired leases, stale workers, and retry exhaustion cannot apply a batch twice or overwrite a terminal outcome.
+- Duplicate claim attempts, expired leases, stale workers, and retry exhaustion cannot apply a batch twice or overwrite a terminal outcome.
 - A lost commit acknowledgment cannot turn a committed success into failure.
-- External-service failure does not disappear behind a successful database result; consumers deduplicate and uncertain effects reconcile.
+- Local issue/replacement is a successful database result only after all card, operation, history, audit, idempotency, and opaque-reference records commit; no external-service outcome exists in v1.
+- The `00:00` UTC expiry run can partially complete: every card outcome is independently recorded, each failed item gets only three automatic retries after its initial attempt, and automatic retry skips a card already expired by another action. Exhausted items require an audited manual retry.
 - Permission loss before execution fails the batch without card changes even when its original JWT has not expired. Ordinary logout/token expiry or password change alone does not cancel authorized accepted work.
 - Authentication-service unavailability defers work without using stale authorization. Retry after recovery rechecks current permissions; changes after the documented checkpoint do not imply distributed rollback.
 
@@ -451,7 +459,7 @@ Use a provisional benchmark of **100 banks × 10,000 cards**, corresponding clie
 The documentation establishes domain boundaries and scaling strategies. Resolve the following before implementing the affected behavior:
 
 - Exact card lifecycle states, valid transitions, and already-at-target semantics. Delayed-execution authorization follows the settled checkpoint rules in Section 9.6.
-- Credential-service contracts, remote-confirmation requirements, and reconciliation semantics; database success must remain distinguishable from remote completion.
+- Future credential-provider contracts, remote-confirmation requirements, and reconciliation semantics. V1 local issuance/replacement has no remote completion.
 - Final columns, lengths, checks, nullability, helper keys, operation-state vocabulary, and field-level API contracts.
 - Client data minimization, product configuration/versioning, and account-reference lifecycle rules.
 - Maximum atomic batch size, transaction timeouts, worker lease duration, retry/backoff limits, and fairness settings, based on measured workloads.
@@ -462,4 +470,4 @@ The documentation establishes domain boundaries and scaling strategies. Resolve 
 - Client-side token transport/storage, account recovery/bootstrap credential delivery, MFA, and machine-to-machine authentication. No flows or additional tables for these deferred capabilities are implemented here.
 - Authentication audit/session/token retention, bounded cleanup scheduling, and protection/availability of the central authentication database, while retaining consumed tokens through family validity and preserving audit references.
 
-**Established defaults:** independent clients per bank; bank-owned external accounts; virtual cards first; shared PostgreSQL tables; `entity_id` routing to one initial data shard; asynchronous status batches with one target status and all-or-nothing local card updates; four fixed staff roles; central local authentication; 15-minute access JWTs; seven-day non-sliding refresh families; expiry-based access revocation; current-user authorization before every batch execution attempt.
+**Established defaults:** independent clients per bank; bank-owned external accounts; virtual cards first; shared PostgreSQL tables; `entity_id` routing to one initial data shard; asynchronous operator-created status batches with one target status and all-or-nothing local card updates; a non-atomic system expiry run every day at `00:00` UTC with per-card results and up to three automatic retries; four fixed staff roles; central local authentication; 15-minute access JWTs; seven-day non-sliding refresh families; expiry-based access revocation; current-user authorization before every batch execution attempt.

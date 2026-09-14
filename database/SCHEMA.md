@@ -1,6 +1,6 @@
-# Initial schema reference
+# Schema reference
 
-The two `001_initial.sql` migrations are the source of truth for nullability, defaults, checks, keys and indexes. This reference lists their concrete columns. UUIDs are opaque identifiers; event/lifecycle timestamps use `timestamptz`.
+The versioned SQL migrations are the source of truth for nullability, defaults, checks, keys and indexes. This reference lists their concrete columns. UUIDs are opaque identifiers; event/lifecycle timestamps use `timestamptz`.
 
 ## Conventions
 
@@ -8,7 +8,8 @@ The two `001_initial.sql` migrations are the source of truth for nullability, de
 - Mutable records have creation/update timestamps and actor UUIDs; shard actors refer logically to central users without cross-database foreign keys.
 - Required creation attribution is immutable. Update timestamps advance automatically; callers supply the acting user in `updated_by`. Business card/configuration version increments are application responsibilities.
 - Text codes/references are opaque, case-sensitive and nonempty unless noted by the DDL. No account balances, PAN, CVV, raw tokens, or customer identity matching are modeled.
-- `bank.card_state`: pending, issued, active, suspended, closed, expired. `bank.execution_state`: queued, processing, succeeded, failed.
+- `bank.card_state`: pending, issued, active, suspended, closed, expired. `bank.execution_state`: draft, queued, processing, succeeded, failed, cancelled; Card Operations are limited to queued, processing, succeeded, and failed.
+- Automated expiry records use the non-human `system` actor: no staff-user UUID or bank actor context, and a nonempty executor identity.
 - JSONB fields accept objects. Field allowlists, size bounds and sanitization are application responsibilities; Client has only optional display name beyond its bank reference.
 - Runtime audit/history access is append-only. Retention/cleanup roles and jobs are not provisioned.
 - `ci_meta.database_identity` stores the database kind; `ci_meta.schema_migrations` stores version, filename, checksum and applied time.
@@ -145,7 +146,7 @@ The two `001_initial.sql` migrations are the source of truth for nullability, de
 | `account_reference_id` | `uuid NOT NULL` |
 | `product_id` | `uuid NOT NULL` |
 | `status` | `bank.card_state NOT NULL DEFAULT 'pending'` |
-| `credential_reference` | `text CHECK (credential_reference IS NULL OR btrim(credential_reference)<>'')` |
+| `credential_reference` | `text CHECK (credential_reference IS NULL OR btrim(credential_reference)<>'')`; v1 local issue/replacement stores a generated non-secret opaque reference. |
 | `predecessor_card_id` | `uuid` |
 | `issued_at` | `timestamptz` |
 | `activated_at` | `timestamptz` |
@@ -168,8 +169,8 @@ The two `001_initial.sql` migrations are the source of truth for nullability, de
 | `action` | `text NOT NULL CHECK (action IN ('issue','activate','suspend','resume','close','expire','replace'))` |
 | `status` | `bank.execution_state NOT NULL DEFAULT 'queued'` |
 | `reason` | `text NOT NULL CHECK (btrim(reason)<>'')` |
-| `actor_user_id` | `uuid NOT NULL` |
-| `actor_role` | `text NOT NULL CHECK (actor_role IN ('issuer_operator','bank_operator'))` |
+| `actor_user_id` | `uuid`; null only for the `system` actor |
+| `actor_role` | `text NOT NULL CHECK (actor_role IN ('issuer_operator','bank_operator','system'))` |
 | `actor_entity_id` | `uuid` |
 | `executor_identity` | `text` |
 | `request_id` | `uuid NOT NULL` |
@@ -179,8 +180,8 @@ The two `001_initial.sql` migrations are the source of truth for nullability, de
 | `failure_summary` | `text` |
 | `created_at` | `timestamptz NOT NULL DEFAULT now()` |
 | `updated_at` | `timestamptz NOT NULL DEFAULT now()` |
-| `created_by` | `uuid NOT NULL` |
-| `updated_by` | `uuid NOT NULL` |
+| `created_by` | `uuid`; null for a system-created operation |
+| `updated_by` | `uuid`; null for a system-created operation |
 
 ## `bank.card_status_history`
 
@@ -193,9 +194,10 @@ The two `001_initial.sql` migrations are the source of truth for nullability, de
 | `previous_status` | `bank.card_state NOT NULL` |
 | `new_status` | `bank.card_state NOT NULL` |
 | `reason` | `text NOT NULL CHECK (btrim(reason)<>'')` |
-| `actor_user_id` | `uuid NOT NULL` |
-| `actor_role` | `text NOT NULL CHECK (actor_role IN ('issuer_operator','bank_operator'))` |
+| `actor_user_id` | `uuid`; null only for the `system` actor |
+| `actor_role` | `text NOT NULL CHECK (actor_role IN ('issuer_operator','bank_operator','system'))` |
 | `actor_entity_id` | `uuid` |
+| `executor_identity` | `text`; required for the `system` actor |
 | `created_at` | `timestamptz NOT NULL DEFAULT now()` |
 
 ## `bank.audit_events`
@@ -204,8 +206,8 @@ The two `001_initial.sql` migrations are the source of truth for nullability, de
 | --- | --- |
 | `entity_id` | `uuid NOT NULL REFERENCES bank.entities(id)` |
 | `id` | `uuid NOT NULL DEFAULT gen_random_uuid()` |
-| `actor_user_id` | `uuid NOT NULL` |
-| `actor_role` | `text NOT NULL CHECK (actor_role IN ('issuer_operator','issuer_readonly','bank_operator','bank_readonly'))` |
+| `actor_user_id` | `uuid`; null only for the `system` actor |
+| `actor_role` | `text NOT NULL CHECK (actor_role IN ('issuer_operator','issuer_readonly','bank_operator','bank_readonly','system'))` |
 | `actor_entity_id` | `uuid` |
 | `executor_identity` | `text` |
 | `action` | `text NOT NULL CHECK (btrim(action)<>'')` |
@@ -246,8 +248,11 @@ The two `001_initial.sql` migrations are the source of truth for nullability, de
 | `requester_entity_id` | `uuid` |
 | `request_id` | `uuid NOT NULL` |
 | `idempotency_record_id` | `uuid NOT NULL` |
-| `status` | `bank.execution_state NOT NULL DEFAULT 'queued'` |
+| `status` | `bank.execution_state NOT NULL DEFAULT 'draft'`; public batches use draft, queued, processing, succeeded, failed, or cancelled |
 | `item_count` | `integer NOT NULL CHECK (item_count>0)` |
+| `applied_count` | `integer NOT NULL DEFAULT 0 CHECK (applied_count>=0)` |
+| `ignored_count` | `integer NOT NULL DEFAULT 0 CHECK (ignored_count>=0)` |
+| `retry_of_batch_id` | `uuid`; optional same-bank terminal failed/cancelled source batch, preserving its target status and reason |
 | `attempt_count` | `integer NOT NULL DEFAULT 0 CHECK (attempt_count>=0)` |
 | `next_attempt_at` | `timestamptz NOT NULL DEFAULT now()` |
 | `lease_owner` | `text` |
@@ -272,10 +277,40 @@ The two `001_initial.sql` migrations are the source of truth for nullability, de
 | `card_id` | `uuid NOT NULL` |
 | `operation_id` | `uuid NOT NULL` |
 | `previous_status` | `bank.card_state` |
-| `outcome` | `text NOT NULL DEFAULT 'pending' CHECK (outcome IN ('pending','applied','not_applied'))` |
+| `outcome` | `text NOT NULL DEFAULT 'pending' CHECK (outcome IN ('pending','applied','not_applied','ignored'))`; new items are pending, only `applied` has `previous_status`, and processing work resolves each item once |
 | `failure_code` | `text` |
 
+## `bank.card_expiry_runs`
+
+One system-owned run exists per bank per UTC date. Unlike public card-status batches, its card items complete independently.
+
+| Column | SQL definition |
+| --- | --- |
+| `entity_id`, `id` | Tenant and run identity |
+| `run_date` | `date NOT NULL`, unique per bank |
+| `status` | `processing` or `completed` |
+| `item_count`, `expired_count`, `skipped_already_expired_count`, `manual_retry_required_count` | Nonnegative aggregate counts |
+| `executor_identity` | Nonempty system worker identity |
+| `created_at`, `updated_at`, `completed_at` | Run timestamps |
+
+## `bank.card_expiry_run_items`
+
+| Column | SQL definition |
+| --- | --- |
+| `entity_id`, `id`, `expiry_run_id` | Tenant, item, and parent-run identity |
+| `card_id`, `operation_id` | Card and its same-bank `expire` operation |
+| `status` | `pending`, `processing`, `expired`, `skipped_already_expired`, or `manual_retry_required` |
+| `attempt_count` | Total attempts, including manual attempts |
+| `automatic_retry_count` | `0` through `3`; never reset by a manual retry |
+| `manual_retry_count` | Number of issuer-operator manual requeues |
+| `next_attempt_at`, `lease_owner`, `lease_expires_at`, `lease_version` | Scheduling and fenced worker claim state |
+| `failure_code` | Sanitized most-recent failure code |
+| `manual_retry_by`, `manual_retry_at` | Recorded issuer-operator manual-retry attribution |
+| `created_at`, `updated_at` | Item timestamps |
+
 ## `bank.outbox_messages`
+
+Reserved for future integration work; v1 local issue/replacement and batch dispatch do not create messages here.
 
 | Column | SQL definition |
 | --- | --- |
@@ -300,9 +335,8 @@ The two `001_initial.sql` migrations are the source of truth for nullability, de
 
 ## Enforced relationships and boundaries
 
-Cards reference an account with the same bank and client. History and batch items reference an operation for the same bank and card. Existing batch item membership and accepted batch/operation request attribution cannot be rewritten. Each operation appears in at most one batch item; a batch cannot repeat a card.
+Cards reference an account with the same bank and client. History, public batch items, and expiry-run items reference an operation for the same bank and card; expiry items require a system-attributed `expire` operation. Existing item membership and accepted batch/operation request attribution cannot be rewritten. A public batch cannot repeat a card; an expiry run cannot contain a card more than once. New public batches and expiry records begin unprocessed; public batches have constrained draft/queue/claim/cancellation/retry transitions and terminal result counts that match item outcomes. Expiry runs are per-card and can partially complete; an exhausted item retains its three automatic retries and may be requeued only by an issuer operator when its card has not already expired.
 
 Bank users require a central directory assignment; issuer users require no assignment. Usernames normalize to trimmed lowercase ASCII before uniqueness checks. Sensitive user changes advance authorization versions. Session identity/absolute expiry and token identity/ancestry/lifetime are immutable; revoked sessions and consumed-token evidence cannot be restored. Token parents must already exist in the same family, preventing cycles and cross-family links; unique parent references prevent branching. Token insertions lock the session and enforce its lifetime.
 
 The schema does not authenticate a request or execute lifecycle/refresh/batch workflows. Submission membership completeness, valid card transitions, audit co-commit, delivery semantics, refresh replay handling, session/user authorization checks and cross-database routing authorization remain application responsibilities described in the README.
-

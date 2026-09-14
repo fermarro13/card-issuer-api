@@ -2,14 +2,16 @@
 
 ## Purpose
 
-This document defines the first buildable application architecture for Card Issuer API: its public HTTP API, its independently deployed batch-executor daemon, and the contracts between them and PostgreSQL.
+This document defines the target application architecture for Card Issuer API: its public HTTP API, its independently deployed batch-executor daemon, and the contracts between them and PostgreSQL.
 
-The system remains one Go module with shared internal domain packages. It is deployed as two binaries:
+**Implementation status (2026-09-13):** the shard persistence contract described below is implemented in the initial schema and has database-harness coverage. The public card/batch API, authentication flows, and `cmd/executor` daemon remain application work; the repository currently contains the base API process rather than the complete architecture described here.
+
+The target system remains one Go module with shared internal domain packages. It is designed to be deployed as two binaries:
 
 | Component | Command | Responsibility |
 | --- | --- | --- |
 | API | `cmd/api` | Authenticates staff, authorizes requests, routes to a bank shard, serves reads, manages reference data, creates reviewable batch drafts, and executes synchronous local card-status commands. |
-| Executor | `cmd/executor` | Polls and executes triggered batches, processes credential-provider work, schedules expiry, and recovers expired leases. |
+| Executor | `cmd/executor` | Polls and executes triggered batches, schedules expiry, and recovers expired leases. |
 
 The executor is deliberately not a second public business API. It has only operational health and metrics endpoints. Both binaries use the same trusted shard-routing, tenant-context, repository, lifecycle-validation, audit, and configuration packages.
 
@@ -17,11 +19,11 @@ The executor is deliberately not a second public business API. It has only opera
 
 ### Database-backed work, no broker in v1
 
-A batch draft is reviewable database state. Calling its execute endpoint moves it to `queued`; the executor then polls and claims it from PostgreSQL. PostgreSQL is both the durable source of truth and the work queue for batches.
+A batch draft is reviewable database state. Calling its execute endpoint moves it to `queued`; the executor then polls and claims it from PostgreSQL. PostgreSQL is both the durable source of truth and the work queue for batches. Public card-status batches are atomic; daily system expiry runs are a distinct per-card workflow and deliberately permit partial completion.
 
 This avoids operating RabbitMQ before there is a need for fan-out, independent consumers, or cross-service delivery guarantees. It also avoids the dual reliability problem of persisting a batch and publishing a message. The trade-off is bounded polling delay and the need to tune database polling fairly as load grows.
 
-The existing outbox remains part of the design for credential-provider work and future integrations. It is not required to wake a batch worker in v1.
+The existing outbox remains available for future integrations. It is not required to wake a batch worker or process card issue/replacement in v1.
 
 ### Separate processes, shared Go packages
 
@@ -39,11 +41,11 @@ Batch construction and execution are different commands:
 
 This supports approval/review workflows without allowing draft membership or intent to change invisibly. A changed list, reason, or target status is a new draft.
 
-### Local synchronous commands; remote work is asynchronous
+### Local synchronous commands; batches are asynchronous
 
-Activation, suspension, resumption, and closure of one existing card make only local PostgreSQL changes. The API performs them synchronously in one shard transaction.
+Issue, replacement, activation, suspension, resumption, and closure make only local PostgreSQL changes. The API performs each individual card command synchronously in one shard transaction.
 
-Issue and replacement require a credential provider and are therefore accepted asynchronously. The API persists a pending operation and opaque work request; the executor performs the provider call with a stable idempotency key. A local card is not reported as issued until provider confirmation is committed.
+Issue and replacement generate a non-secret opaque local credential reference. Each command commits the issued card, succeeded operation, status-history and audit evidence, and idempotency result atomically. PAN, CVV, credential material, and provider-like responses are neither stored nor returned. A future credential-provider integration is a separately designed asynchronous extension, not v1 behavior.
 
 ## HTTP conventions
 
@@ -91,11 +93,11 @@ Every bank business path contains `{bankId}`. The API verifies the token before 
 
 ## Public resource API
 
-Issuer operators manage banks and staff. All roles access only the resources their role and selected bank permit.
+Only `issuer_operator` may manage or read bank-directory resources and staff. Bank-scoped roles have no access to bank-directory resources, including their assigned bank; `issuer_readonly` likewise has no access because these are administrative rather than business-read resources. All roles access only the resources their role and selected bank permit.
 
 | Resource | Endpoints | Notes |
 | --- | --- | --- |
-| Banks | `GET`, `POST /v1/banks`; `GET`, `PATCH /v1/banks/{bankId}` | A bank resource maps to the shard-local Entity and its central routing entry. No delete endpoint exists. |
+| Banks | `GET`, `POST /v1/banks`; `GET`, `PATCH /v1/banks/{bankId}` | `issuer_operator` only. A bank resource maps to the shard-local Entity and its central routing entry. No delete endpoint exists. |
 | Staff users | `GET`, `POST /v1/users`; `GET`, `PATCH /v1/users/{userId}`; `POST /v1/users/{userId}:disable`; `POST /v1/users/{userId}:set-password` | Issuer operators only. Role/bank assignment changes are audited and increment authorization version as required. |
 | Products | `GET`, `POST /v1/banks/{bankId}/card-products`; `GET`, `PATCH /v1/banks/{bankId}/card-products/{productId}` | Product configuration is an opaque validated JSON object; updates advance configuration version. |
 | Clients | `GET`, `POST /v1/banks/{bankId}/clients`; `GET`, `PATCH /v1/banks/{bankId}/clients/{clientId}` | Input is an opaque `external_client_ref` and optional `display_name`. |
@@ -109,27 +111,27 @@ Creation and update responses return the current resource representation. Refere
 
 | Method and path | Behavior | Success |
 | --- | --- | --- |
-| `POST /v1/banks/{bankId}/cards` | Creates a `pending` card and queued `issue` operation from `client_id`, `account_reference_id`, `product_id`, and `reason`. Issuer operator only. | `202` with card and operation summaries. |
+| `POST /v1/banks/{bankId}/cards` | Creates an `issued` card and succeeded `issue` operation from `client_id`, `account_reference_id`, `product_id`, and `reason`, with an opaque local credential reference. Issuer operator only. | `201` with card and operation summaries. |
 | `POST /v1/banks/{bankId}/cards/{cardId}:activate` | `issued` to `active`; when the card is a replacement, closes its predecessor in the same transaction. | `200` with card and operation. |
 | `POST /v1/banks/{bankId}/cards/{cardId}:suspend` | `active` to `suspended`. | `200` with card and operation. |
 | `POST /v1/banks/{bankId}/cards/{cardId}:resume` | `suspended` to `active`. | `200` with card and operation. |
 | `POST /v1/banks/{bankId}/cards/{cardId}:close` | Moves an eligible nonterminal card to `closed`. | `200` with card and operation. |
-| `POST /v1/banks/{bankId}/cards/{cardId}:replace` | Creates a linked pending successor and queued provider operation. Issuer operator only. | `202` with successor card and operation summaries. |
+| `POST /v1/banks/{bankId}/cards/{cardId}:replace` | Creates a linked `issued` successor and succeeded `replace` operation, with an opaque local credential reference. Issuer operator only. | `201` with successor card and operation summaries. |
 
 Each command body has a required nonempty `reason`. A request that targets the card's present status is a successful ignored operation: it writes operation/audit evidence but does not alter the card, increment its version, or append status history. Other invalid transitions return `422 invalid_card_transition`.
 
 The lifecycle is:
 
 ```text
-pending --provider confirmation--> issued --activate--> active --suspend--> suspended
+pending --local issue/replace transaction--> issued --activate--> active --suspend--> suspended
                                              ^                        |
                                              |---------resume---------|
 
 eligible nonterminal states --close--> closed
-eligible nonterminal states --scheduled expiry--> expired
+eligible nonterminal states --daily scheduled expiry (00:00 UTC)--> expired
 ```
 
-`closed` and `expired` are terminal. The executor creates system-attributed expiry operations for due cards; there is no public expire command. Replacement provisioning leaves the predecessor unchanged. Activating the confirmed successor atomically closes that predecessor.
+`closed` and `expired` are terminal. At `00:00` UTC each day, the executor creates one system-attributed expiry run for due eligible cards. An expiry run is not atomic: each card is handled in its own shard transaction and has its own result: `pending`, `expired`, `skipped_already_expired`, or `manual_retry_required` with a safe failure code. A failed card receives up to three automatic retries after its initial attempt. Before every retry, the executor rereads and locks that card; it retries only if the card is still not expired, otherwise it records `skipped_already_expired`. After the third retry fails, the item is aborted as `manual_retry_required`. An `issuer_operator` may explicitly retry only that exhausted item through `POST /v1/banks/{bankId}/card-expiry-runs/{expiryRunId}/items/{itemId}:retry`; the command requires an idempotency key and nonempty reason, queues the item, and returns `202`. If that manual attempt fails, it returns to `manual_retry_required` without restarting automatic retries. Replacement leaves the predecessor unchanged. Activating the issued successor atomically closes that predecessor.
 
 ## Batch API
 
@@ -183,16 +185,15 @@ If any non-ignored item is invalid, no card updates from that batch commit. The 
 
 ### Work loops
 
-The executor runs four independently bounded loops:
+The executor runs three independently bounded loops:
 
 1. **Batch dispatcher:** polls eligible `queued` batches fairly across banks, claims one using a lease owner, expiry, and incremented fencing version, then executes it.
 2. **Lease recovery:** safely reclaims expired processing leases only after observing row locks and fencing rules. A stale worker cannot commit after ownership changes.
-3. **Credential worker:** claims outbox records for card issue/replacement, calls the provider with the logical operation ID as an idempotency key, and persists confirmed opaque credential references and outcomes.
-4. **Expiry scheduler:** periodically finds due eligible cards and creates system-attributed expiry operations without duplicating an existing terminal outcome.
+3. **Expiry scheduler:** starts the daily expiry run at `00:00` UTC, creates one system-attributed item per due eligible card, and processes items independently. It performs at most three automatic retries after an item's initial failed attempt, only while the card remains not expired; exhausted items require an explicit manual retry.
 
 Before each batch execution attempt, the daemon reads the submitter's current enabled status, role, and bank assignment from the control database. It defers safely when central authorization is unavailable, fails the batch without card changes when permission is absent, and never relies on the originally submitted JWT.
 
-No remote call occurs while a card-update transaction or card locks are held. Provider delivery is at least once; the provider contract must deduplicate by operation ID and support reconciliation after an uncertain result.
+No remote call occurs while a card-update transaction or card locks are held. A future provider integration must define its own at-least-once delivery, idempotency, and reconciliation contract before it is enabled.
 
 ### Operational interface and configuration
 
@@ -204,27 +205,29 @@ The executor exposes only:
 | `GET /health/ready` | Control/shard pools and worker dependencies needed to claim work are reachable. |
 | `GET /metrics` | Protected or network-restricted Prometheus metrics. |
 
-Important configuration includes executor identity, control/shard URLs, polling interval, maximum concurrent claims, per-bank concurrency, lease duration, retry/backoff limits, batch-size cap, expiry scan cadence, credential-provider timeout, and graceful-drain timeout. Values remain bounded configuration, selected from load testing rather than hard-coded assumptions.
+Important configuration includes executor identity, control/shard URLs, polling interval, maximum concurrent claims, per-bank concurrency, lease duration, batch retry/backoff limits, batch-size cap, the fixed daily expiry schedule (`00:00` UTC), expiry-retry backoff, and graceful-drain timeout. Expiry automatic retries are fixed at three per item after the initial attempt. Values other than these settled expiry defaults remain bounded configuration, selected from load testing rather than hard-coded assumptions.
 
 On `SIGTERM`, the executor stops claiming new work, lets bounded in-flight transactions finish, releases resources, and relies on lease recovery for interrupted work.
 
-## Persistence changes required before implementation
+## Persistence implementation status
 
-The initial migration currently models only `queued`, `processing`, `succeeded`, and `failed` batches with all-or-nothing `applied`/`not_applied` items. Add a new forward-only shard migration; never edit the applied initial migration. It must add:
+The shard initial migration now implements the public-batch persistence model beyond the original all-or-nothing `queued`/`processing`/`succeeded`/`failed` shape:
 
 - batch states `draft` and `cancelled`;
 - item outcome `ignored` and constraints permitting an ignored item without `previous_status`;
 - applied and ignored result counts on batch headers;
 - an optional tenant-scoped `retry_of_batch_id` relationship;
-- invariants for draft immutability, allowed state transitions, queued work claiming, cancellation, and successor retry provenance;
+- invariants for draft-only creation and membership, exact membership before dispatch, allowed state transitions, fenced queued-work claiming, cancellation, successor retry provenance, and terminal counts matching item outcomes;
 - indexes for draft review, queued dispatch, lease recovery, and retry lookup.
 
-The implementation must update `docs/database-design.md` and `database/SCHEMA.md` where these new contract decisions supersede the initial all-items-applied batch description.
+It also implements a separate system expiry-run header and per-card-item model rather than reusing the atomic public status-batch result. The schema enforces one run per bank/UTC date, system `expire` operations for its items, per-item attempts/outcomes/safe failure codes, fenced claims, exact terminal aggregate counts, and retry selection only while the card is not `expired`. An item becomes `manual_retry_required` after its initial attempt and three automatic retries fail.
+
+`docs/database-design.md` and `database/SCHEMA.md` reflect these settled initial-schema contracts. The issuer-operator authorization, command idempotency, and audit co-commit for the manual-retry endpoint are deliberately application responsibilities; their persistence primitives are available but the endpoint is not implemented yet.
 
 ## Verification requirements
 
-- API contract tests cover authentication, role/bank routing, error shapes, cursor behavior, idempotency replay/conflict, and secret exclusion.
-- Card tests cover every permitted/forbidden transition, same-status no-ops, credential-provider failure/reconciliation, replacement activation, and scheduled expiry.
-- Batch tests cover draft construction, exact card-list validation, immutability, review reads, trigger idempotency, cancellation races, linked retry, applied/ignored combinations, invalid-transition rollback, authorization loss, and central-auth outages.
-- Executor integration tests cover concurrent workers, deterministic locks, lease expiry, fencing, crash/restart recovery, fair selection, lost commit acknowledgement, and no duplicate batch application.
+- API contract tests cover authentication, role/bank routing, error shapes, cursor behavior, idempotency replay/conflict, and secret exclusion. They verify that every bank-directory endpoint rejects `issuer_readonly`, `bank_operator`, and `bank_readonly`, including a bank operator requesting its assigned bank; only `issuer_operator` can manually retry an exhausted expiry item.
+- Card tests cover synchronous issue/replacement success, opaque local credential-reference generation, idempotency replay/conflict, every permitted/forbidden transition, same-status no-ops, replacement activation, and scheduled expiry.
+- Database-harness tests cover draft construction, exact membership before dispatch, cancellation, linked retry provenance, per-item expiry retries, terminal expiry aggregates, and rejection of a retry once the card is expired. They require a disposable PostgreSQL 17 instance and `CI_TEST_DATABASE=1` to execute the integration path.
+- Future API and executor tests still need to cover contract authorization, cursor/idempotency behavior, concurrent workers, deterministic locks, lease expiry/fencing, crash recovery, fair selection, lost commit acknowledgement, and no duplicate batch application. Expiry coverage must include the `00:00` UTC schedule, independently committed per-card outcomes, manual-only recovery after exhaustion, and audited idempotent manual retries.
 - Deployment tests prove API and executor can start, become ready, scale, and shut down independently against the existing Compose PostgreSQL environment.
