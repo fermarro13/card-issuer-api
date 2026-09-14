@@ -1,13 +1,19 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"net/url"
 	"strings"
 	"testing"
 )
 
 func TestDatabaseCredentialsAreEncoded(t *testing.T) {
-	values := map[string]string{"CONTROL_DB_PASSWORD": "quote' @:/?&=\\$ control", "SHARD_DB_PASSWORD": "shard password", "CONTROL_DATABASE": "control db"}
+	values := validValues()
+	values["CONTROL_DB_PASSWORD"] = "quote' @:/?&=\\$ control"
+	values["AUTH_DB_PASSWORD"] = "auth password"
+	values["SHARD_DB_PASSWORD"] = "shard password"
+	values["CONTROL_DATABASE"] = "control db"
 	cfg, err := load(func(key string) string { return values[key] })
 	if err != nil {
 		t.Fatal(err)
@@ -20,7 +26,7 @@ func TestDatabaseCredentialsAreEncoded(t *testing.T) {
 	if password != values["CONTROL_DB_PASSWORD"] || u.Path != "/control db" || u.User.Username() != "ci_app_control" {
 		t.Fatal("connection values were not preserved")
 	}
-	if strings.Contains(cfg.ShardURL, "ci_app_control") {
+	if strings.Contains(cfg.ShardURL, "ci_app_control") || !strings.Contains(cfg.AuthURL, "ci_app_auth") {
 		t.Fatal("database identities were mixed")
 	}
 }
@@ -31,9 +37,9 @@ func TestInvalidConfigurationDoesNotExposeCredentials(t *testing.T) {
 		values map[string]string
 	}{
 		{"missing password", map[string]string{}},
-		{"invalid port", map[string]string{"PGPORT": "secret@invalid"}},
-		{"invalid listen", map[string]string{"HTTP_ADDR": "secret@invalid"}},
-		{"invalid sslmode", map[string]string{"PGSSLMODE": "secret@invalid"}},
+		{"invalid port", with("PGPORT", "secret@invalid")},
+		{"invalid listen", with("HTTP_ADDR", "secret@invalid")},
+		{"invalid sslmode", with("PGSSLMODE", "secret@invalid")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := load(func(key string) string { return tc.values[key] })
@@ -42,4 +48,18 @@ func TestInvalidConfigurationDoesNotExposeCredentials(t *testing.T) {
 			}
 		})
 	}
+}
+
+func validValues() map[string]string {
+	return map[string]string{
+		"CONTROL_DB_PASSWORD": "control", "AUTH_DB_PASSWORD": "auth", "SHARD_DB_PASSWORD": "shard",
+		"AUTH_JWT_PRIVATE_KEY_B64": base64.RawStdEncoding.EncodeToString(ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))),
+		"AUTH_JWT_ISSUER":          "issuer", "AUTH_JWT_AUDIENCE": "audience",
+	}
+}
+
+func with(key, value string) map[string]string {
+	values := validValues()
+	values[key] = value
+	return values
 }

@@ -30,7 +30,7 @@ $env:PGUSER = 'postgres'
 ./database/Invoke-Database.ps1 -Action SetupTest
 ```
 
-`SetupTest` creates roles/databases if absent, applies migrations, provisions Test Bank on the shard, then inserts its central routing entry and four staff accounts. Their passwords are in [TEST-CREDENTIALS.md](TEST-CREDENTIALS.md). These are application accounts; no API login endpoint exists in this repository yet. All PostgreSQL roles created by bootstrap are `NOLOGIN` groups. Compose uses `Initialize-Compose.sh` and `compose-runtime.sql` to provision and verify its two restricted login accounts after SetupTest succeeds.
+`SetupTest` creates roles/databases if absent, applies migrations, provisions Test Bank on the shard, then inserts its central routing entry and four staff accounts. Their passwords are in [TEST-CREDENTIALS.md](TEST-CREDENTIALS.md). These are application accounts for the authentication API. All PostgreSQL groups created by bootstrap are `NOLOGIN`; Compose provisions its separate restricted login accounts through `Initialize-Compose.sh` and `compose-runtime.sql`.
 
 To specify a client executable or different database names:
 

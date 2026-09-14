@@ -16,7 +16,7 @@ import (
 func TestLivenessDoesNotCallDatabases(t *testing.T) {
 	probe := func(context.Context) error { t.Error("liveness called database"); return errors.New("unavailable") }
 	w := httptest.NewRecorder()
-	Handler(probe, probe).ServeHTTP(w, httptest.NewRequest("GET", "/health/live", nil))
+	Handler(probe, probe, probe, nil).ServeHTTP(w, httptest.NewRequest("GET", "/health/live", nil))
 	if w.Code != 200 || w.Body.String() != "{\"status\":\"ok\"}\n" {
 		t.Fatalf("unexpected liveness response: %d %s", w.Code, w.Body)
 	}
@@ -32,7 +32,7 @@ func TestReadinessOutageAndRecovery(t *testing.T) {
 	}
 	var shardCalls atomic.Int32
 	shard := func(context.Context) error { shardCalls.Add(1); return nil }
-	handler := Handler(control, shard)
+	handler := Handler(control, control, shard, nil)
 	for _, down := range []bool{false, true, false} {
 		offline.Store(down)
 		w := httptest.NewRecorder()
@@ -50,8 +50,17 @@ func TestReadinessOutageAndRecovery(t *testing.T) {
 	}
 }
 
+func TestReadinessRequiresAuthenticationPool(t *testing.T) {
+	authUnavailable := func(context.Context) error { return errors.New("unavailable") }
+	w := httptest.NewRecorder()
+	Handler(authUnavailable, func(context.Context) error { return nil }, func(context.Context) error { return nil }, nil).ServeHTTP(w, httptest.NewRequest("GET", "/health/ready", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("authentication outage was ready: %d", w.Code)
+	}
+}
+
 func TestReadinessUsesOneConcurrentTwoSecondDeadline(t *testing.T) {
-	started := make(chan time.Time, 2)
+	started := make(chan time.Time, 3)
 	probe := func(ctx context.Context) error {
 		deadline, ok := ctx.Deadline()
 		if !ok {
@@ -61,13 +70,13 @@ func TestReadinessUsesOneConcurrentTwoSecondDeadline(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}
-	handler := Handler(probe, probe)
+	handler := Handler(probe, probe, probe, nil)
 	w := httptest.NewRecorder()
 	done := make(chan struct{})
 	begin := time.Now()
 	go func() { handler.ServeHTTP(w, httptest.NewRequest("GET", "/health/ready", nil)); close(done) }()
 	var deadlines []time.Time
-	for range 2 {
+	for range 3 {
 		select {
 		case d := <-started:
 			deadlines = append(deadlines, d)
@@ -75,7 +84,7 @@ func TestReadinessUsesOneConcurrentTwoSecondDeadline(t *testing.T) {
 			t.Fatal("database checks did not start concurrently")
 		}
 	}
-	if !deadlines[0].Equal(deadlines[1]) {
+	if !deadlines[0].Equal(deadlines[1]) || !deadlines[1].Equal(deadlines[2]) {
 		t.Fatal("checks must share a deadline")
 	}
 	select {
@@ -93,7 +102,7 @@ func TestReadinessCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	w := httptest.NewRecorder()
-	Handler(probe, probe).ServeHTTP(w, httptest.NewRequest("GET", "/health/ready", nil).WithContext(ctx))
+	Handler(probe, probe, probe, nil).ServeHTTP(w, httptest.NewRequest("GET", "/health/ready", nil).WithContext(ctx))
 	if w.Code != 503 {
 		t.Fatal("cancelled request was ready")
 	}
@@ -108,7 +117,7 @@ func TestGracefulShutdown(t *testing.T) {
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
-		result <- Serve(ctx, listener, Handler(func(context.Context) error { return nil }, func(context.Context) error { return nil }), slog.New(slog.NewTextHandler(io.Discard, nil)))
+		result <- Serve(ctx, listener, Handler(func(context.Context) error { return nil }, func(context.Context) error { return nil }, func(context.Context) error { return nil }, nil), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}()
 	client := http.Client{Timeout: time.Second}
 	response, err := client.Get("http://" + listener.Addr().String() + "/health/live")

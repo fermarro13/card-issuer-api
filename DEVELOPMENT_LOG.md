@@ -80,6 +80,20 @@ Concise, append-only record of material project interactions and decisions. Do n
 - QA · Gate: BLOCKED pending actual image builds and isolated Compose smoke tests. Docker Desktop cannot start its WSL2 engine because virtualization/Virtual Machine Platform is unavailable (HCS_E_HYPERV_NOT_INSTALLED).
 - Orchestrator · Status: Implementation delivered; Docker-dependent acceptance remains pending. No failed-gate exception or full feature completion claimed. [Review evidence](docs/reviews/2026-09-11-compose-environment.md).
 
+## 2026-09-13 — AUTH-API-001: Authentication endpoints
+
+- User · Scope: Implement login, refresh, logout, current-user, and password-change endpoints using the existing control authentication schema.
+- User · Decisions: Application-owned Ed25519 JWT key pair; user summaries contain username, status, and role; new passwords require 13 characters with uppercase, number, and symbol.
+- User · Exception: Authentication POST endpoints do not require idempotency keys because secret-response replay storage is out of scope and conflicts with refresh replay revocation.
+- Orchestrator · Plan: [Authentication Endpoints](docs/plans/2026-09-13-authentication-endpoints.md).
+- Architect · Gate: BLOCKED. The saved plan transcribed the user-approved refresh-cookie name incorrectly; corrected to `__Host-card-issuer-refresh` before implementation.
+- Architect · Gate: APPROVED. Required boundaries: distinct auth/routing/shard pools, exact refresh-cookie contract, EdDSA-only JWT validation, User-then-session locks, and redacted audit evidence.
+- Implementation · Delivered: dedicated `ci_app_auth` runtime identity/pool; Ed25519 JWTs; Argon2id password verification/change; rotating refresh cookies; request IDs/problem responses; endpoint, concurrency, and redaction tests; and updated Compose/documentation.
+- Automated tests · Evidence: `go version` reported Go 1.27.1; `go vet ./...` and `go test -count=1 ./...` passed. PostgreSQL integration coverage is present but skipped because Docker Desktop/PostgreSQL is unavailable on this host.
+- Security · Gate: APPROVED. JWT, cookie, token rotation, parameterized SQL, audit redaction, and isolation boundaries reviewed; production still requires the PostgreSQL integration run and protected JWT-key configuration.
+- QA · Gate: BLOCKED pending `CI_TEST_DATABASE=1 go test -count=1 -v ./...` against disposable PostgreSQL 17. This must exercise live `ci_app_auth` grants, transactions, triggers, and concurrency before closeout.
+- Orchestrator · Status: Implementation delivered; closeout blocked by the required unskipped PostgreSQL integration gate.
+
 ## Entry template
 
 ## YYYY-MM-DD — FEATURE-###: Short title

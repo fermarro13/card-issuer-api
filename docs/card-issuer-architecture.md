@@ -4,7 +4,7 @@
 
 This document defines the target application architecture for Card Issuer API: its public HTTP API, its independently deployed batch-executor daemon, and the contracts between them and PostgreSQL.
 
-**Implementation status (2026-09-13):** the shard persistence contract described below is implemented in the initial schema and has database-harness coverage. The public card/batch API, authentication flows, and `cmd/executor` daemon remain application work; the repository currently contains the base API process rather than the complete architecture described here.
+**Implementation status (2026-09-13):** the shard persistence contract described below is implemented in the initial schema and has database-harness coverage. The authentication endpoints are implemented in the API process. The public card/batch API and `cmd/executor` daemon remain application work.
 
 The target system remains one Go module with shared internal domain packages. It is designed to be deployed as two binaries:
 
@@ -51,7 +51,7 @@ Issue and replacement generate a non-secret opaque local credential reference. E
 
 All business routes are under `/v1`. UUIDs are represented as lowercase canonical strings. Times are RFC 3339 UTC instants. JSON uses `application/json`; failures use `application/problem+json` with at least `type`, `title`, `status`, `code`, `detail`, and `request_id`.
 
-Clients may supply `X-Request-ID`; otherwise the API generates one. It is returned on every response and is recorded in audit records. Every client-initiated state-changing request requires `Idempotency-Key` with 1-256 characters. Reusing a key with a different normalized request produces `409 idempotency_conflict`.
+Clients may supply `X-Request-ID`; otherwise the API generates one. It is returned on every response and is recorded in audit records. Every client-initiated state-changing request requires `Idempotency-Key` with 1-256 characters, except the authentication POST endpoints. Reusing a key with a different normalized request produces `409 idempotency_conflict`. Authentication flows are excluded because replaying their secret-bearing results would require encrypted response storage and would conflict with refresh-token replay revocation.
 
 Collection responses use cursor pagination:
 
@@ -78,7 +78,7 @@ API versions are additive within `/v1`; incompatible changes require `/v2`. The 
 | `GET /v1/me` | Access token | `200` with the authenticated user summary. |
 | `POST /v1/me/password` | `current_password`, `new_password` | `204`; changes the caller's password and invalidates refresh families as defined by the authentication design. |
 
-The access token is a 15-minute bearer JWT. Refresh tokens are only Secure, HttpOnly, SameSite cookies and are never returned in JSON. Session rotation, replay detection, role/bank claims, and expiry-based access revocation follow `docs/database-design.md`.
+The access token is a 15-minute EdDSA bearer JWT signed by an application-owned Ed25519 key. Refresh tokens are only `__Host-card-issuer-refresh` Secure, HttpOnly, SameSite=Strict cookies (Path `/`, no Domain) and are never returned in JSON. Session rotation, replay detection, role/bank claims, and expiry-based access revocation follow `docs/database-design.md`.
 
 ### Roles and tenant selection
 

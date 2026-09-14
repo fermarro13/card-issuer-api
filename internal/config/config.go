@@ -1,17 +1,24 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"net"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 )
 
 type Config struct {
-	HTTPAddress string
-	ControlURL  string
-	ShardURL    string
+	HTTPAddress   string
+	AuthURL       string
+	ControlURL    string
+	ShardURL      string
+	JWTPrivateKey ed25519.PrivateKey
+	JWTIssuer     string
+	JWTAudience   string
 }
 
 func FromEnvironment() (Config, error) {
@@ -49,6 +56,10 @@ func load(getenv func(string) string) (Config, error) {
 		u.RawQuery = q.Encode()
 		return u.String(), nil
 	}
+	auth, err := connectionURL("AUTH", value("CONTROL_DATABASE", "card_issuer_control"), "ci_app_auth")
+	if err != nil {
+		return Config{}, err
+	}
 	control, err := connectionURL("CONTROL", "card_issuer_control", "ci_app_control")
 	if err != nil {
 		return Config{}, err
@@ -57,5 +68,17 @@ func load(getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	return Config{HTTPAddress: address, ControlURL: control, ShardURL: shard}, nil
+	privateKey, err := base64.RawStdEncoding.DecodeString(getenv("AUTH_JWT_PRIVATE_KEY_B64"))
+	if err != nil {
+		privateKey, err = base64.StdEncoding.DecodeString(getenv("AUTH_JWT_PRIVATE_KEY_B64"))
+	}
+	if err != nil || len(privateKey) != ed25519.PrivateKeySize || !slices.Equal(privateKey, ed25519.NewKeyFromSeed(privateKey[:ed25519.SeedSize])) {
+		return Config{}, errors.New("invalid AUTH_JWT_PRIVATE_KEY_B64")
+	}
+	issuer := getenv("AUTH_JWT_ISSUER")
+	audience := getenv("AUTH_JWT_AUDIENCE")
+	if issuer == "" || audience == "" {
+		return Config{}, errors.New("AUTH_JWT_ISSUER and AUTH_JWT_AUDIENCE are required")
+	}
+	return Config{HTTPAddress: address, AuthURL: auth, ControlURL: control, ShardURL: shard, JWTPrivateKey: ed25519.PrivateKey(privateKey), JWTIssuer: issuer, JWTAudience: audience}, nil
 }

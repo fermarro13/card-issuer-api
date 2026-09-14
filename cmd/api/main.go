@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"card-issuer-api/internal/auth"
 	"card-issuer-api/internal/config"
 	"card-issuer-api/internal/database"
 	"card-issuer-api/internal/server"
@@ -33,6 +34,17 @@ func run(logger *slog.Logger) int {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	signer, err := auth.NewSigner(cfg.JWTPrivateKey, cfg.JWTIssuer, cfg.JWTAudience)
+	if err != nil {
+		logger.Error("invalid authentication configuration")
+		return 1
+	}
+	authPool, err := database.Open(ctx, cfg.AuthURL)
+	if err != nil {
+		logger.Error("authentication database pool initialization failed")
+		return 1
+	}
+	defer authPool.Close()
 	control, err := database.Open(ctx, cfg.ControlURL)
 	if err != nil {
 		logger.Error("control database pool initialization failed")
@@ -51,7 +63,7 @@ func run(logger *slog.Logger) int {
 		return 1
 	}
 	logger.Info("HTTP server started", "address", listener.Addr().String())
-	if err := server.Serve(ctx, listener, server.Handler(control.Ping, shard.Ping), logger); err != nil {
+	if err := server.Serve(ctx, listener, server.Handler(authPool.Ping, control.Ping, shard.Ping, auth.NewService(authPool, signer)), logger); err != nil {
 		logger.Error("HTTP server stopped unexpectedly")
 		return 1
 	}

@@ -13,9 +13,10 @@ value_or_default() {
 control_database=$(value_or_default CONTROL_DATABASE card_issuer_control)
 shard_database=$(value_or_default SHARD_DATABASE card_issuer_shard_01)
 shard_id=$(value_or_default SHARD_ID shard_01)
-for name in CONTROL_DB_PASSWORD SHARD_DB_PASSWORD; do
+for name in CONTROL_DB_PASSWORD AUTH_DB_PASSWORD SHARD_DB_PASSWORD; do
     case "$name" in
         CONTROL_DB_PASSWORD) password=${CONTROL_DB_PASSWORD-} ;;
+        AUTH_DB_PASSWORD) password=${AUTH_DB_PASSWORD-} ;;
         SHARD_DB_PASSWORD) password=${SHARD_DB_PASSWORD-} ;;
     esac
     [ -n "$password" ] || { printf '%s must be nonempty.\n' "$name" >&2; exit 1; }
@@ -45,7 +46,7 @@ trap restore_environment 0 1 2 15
 
 PGSSLMODE=disable
 export PGSSLMODE
-for connection in "${control_database}|ci_app_control|${CONTROL_DB_PASSWORD}" "${shard_database}|ci_app_shard|${SHARD_DB_PASSWORD}"; do
+for connection in "${control_database}|ci_app_control|${CONTROL_DB_PASSWORD}" "${control_database}|ci_app_auth|${AUTH_DB_PASSWORD}" "${shard_database}|ci_app_shard|${SHARD_DB_PASSWORD}"; do
     IFS='|' read -r database user password <<EOF
 $connection
 EOF

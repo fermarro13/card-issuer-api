@@ -1,0 +1,4 @@
+@echo off
+if "%CI_AUTH_TEST_CONTAINER%"=="" exit /b 1
+docker exec -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER=%PGUSER% -e PGPASSWORD=%PGPASSWORD% %CI_AUTH_TEST_CONTAINER% psql %*
+exit /b %ERRORLEVEL%

@@ -1,6 +1,6 @@
 # Application test credentials
 
-These deliberately public passwords are for the test seed only. They are application staff accounts, not PostgreSQL connection accounts. Run `sh database/Invoke-Database.sh --action SetupTest` on Linux/macOS or `Invoke-Database.ps1 -Action SetupTest` on Windows to insert them. Authentication endpoints are not implemented yet.
+These deliberately public passwords are for the test seed only. They are application staff accounts, not PostgreSQL connection accounts. Run `sh database/Invoke-Database.sh --action SetupTest` on Linux/macOS or `Invoke-Database.ps1 -Action SetupTest` on Windows to insert them. The API requires a configured Ed25519 signing key before these accounts can log in.
 
 | Username / role | Bank assignment | Password |
 | --- | --- | --- |

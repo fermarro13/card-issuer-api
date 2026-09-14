@@ -2,6 +2,8 @@ package integration
 
 import (
 	"context"
+	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"card-issuer-api/internal/auth"
 	"card-issuer-api/internal/database"
 	"card-issuer-api/internal/server"
 )
@@ -56,6 +59,7 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 	t.Setenv("SHARD_DATABASE", shardDB)
 	// Special characters verify environment-to-psql quoting and URL encoding.
 	t.Setenv("CONTROL_DB_PASSWORD", "test-control ' $ & @ / : password")
+	t.Setenv("AUTH_DB_PASSWORD", "test-auth ' $ & @ / : password")
 	t.Setenv("SHARD_DB_PASSWORD", "test-shard ' $ & @ / : password")
 	initialize := func() (string, error) {
 		cmd := exec.Command("pwsh", "-NoProfile", "-File", filepath.Join(root, "database", "Initialize-Compose.ps1"), "-Psql", psql)
@@ -102,6 +106,11 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer control.Close()
+	authPool, err := database.Open(ctx, urlFor("ci_app_auth", os.Getenv("AUTH_DB_PASSWORD"), controlDB))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer authPool.Close()
 	shard, err := database.Open(ctx, urlFor("ci_app_shard", os.Getenv("SHARD_DB_PASSWORD"), shardDB))
 	if err != nil {
 		t.Fatal(err)
@@ -136,8 +145,136 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 			t.Fatal("shard login accessed the control database")
 		}
 	})
+	t.Run("authentication_sessions_and_audits", func(t *testing.T) {
+		signer, err := auth.NewSigner(ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize)), "integration", "card-issuer-api")
+		if err != nil {
+			t.Fatal(err)
+		}
+		service := auth.NewService(authPool, signer)
+		login, root, _, err := service.Login(ctx, "issuer_operator", "Test-Issuer-Operator!2026", "90000000-0000-4000-8000-000000000001")
+		if err != nil || login.User.Username != "issuer_operator" || root == "" {
+			t.Fatalf("login failed: %v", err)
+		}
+		claims, err := service.ValidateAccess(login.AccessToken)
+		if err != nil || claims.Username != "issuer_operator" {
+			t.Fatalf("access token was invalid: %v", err)
+		}
+		first, rotated, _, err := service.Refresh(ctx, root, "90000000-0000-4000-8000-000000000002")
+		if err != nil || first.AccessToken == "" || rotated == root {
+			t.Fatalf("refresh failed: %v", err)
+		}
+		if _, _, _, err := service.Refresh(ctx, root, "90000000-0000-4000-8000-000000000003"); !errors.Is(err, auth.ErrInvalidRefresh) {
+			t.Fatalf("refresh replay was accepted: %v", err)
+		}
+		var revoked bool
+		if err := authPool.QueryRow(ctx, "SELECT revoked_at IS NOT NULL FROM control.auth_sessions WHERE id=$1", claims.SessionID).Scan(&revoked); err != nil || !revoked {
+			t.Fatalf("replay did not revoke session: %v %v", revoked, err)
+		}
+
+		concurrent, concurrentRoot, _, err := service.Login(ctx, "issuer_operator", "Test-Issuer-Operator!2026", "90000000-0000-4000-8000-000000000004")
+		if err != nil {
+			t.Fatal(err)
+		}
+		concurrentClaims, err := service.ValidateAccess(concurrent.AccessToken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refreshResults := make(chan error, 2)
+		for range 2 {
+			go func() {
+				_, _, _, refreshErr := service.Refresh(ctx, concurrentRoot, "90000000-0000-4000-8000-000000000005")
+				refreshResults <- refreshErr
+			}()
+		}
+		succeeded, rejected := 0, 0
+		for range 2 {
+			if refreshErr := <-refreshResults; refreshErr == nil {
+				succeeded++
+			} else if errors.Is(refreshErr, auth.ErrInvalidRefresh) {
+				rejected++
+			} else {
+				t.Fatalf("unexpected concurrent refresh failure: %v", refreshErr)
+			}
+		}
+		if succeeded != 1 || rejected != 1 {
+			t.Fatalf("unexpected concurrent refresh results: %d succeeded, %d rejected", succeeded, rejected)
+		}
+		if err := authPool.QueryRow(ctx, "SELECT revoked_at IS NOT NULL FROM control.auth_sessions WHERE id=$1", concurrentClaims.SessionID).Scan(&revoked); err != nil || !revoked {
+			t.Fatalf("concurrent replay did not revoke session: %v %v", revoked, err)
+		}
+		disabled, disabledToken, _, err := service.Login(ctx, "issuer_operator", "Test-Issuer-Operator!2026", "90000000-0000-4000-8000-000000000015")
+		if err != nil {
+			t.Fatal(err)
+		}
+		disabledClaims, err := service.ValidateAccess(disabled.AccessToken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := authPool.Exec(ctx, "UPDATE control.users SET status='disabled' WHERE id=$1", disabledClaims.UserID); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, _, err := service.Refresh(ctx, disabledToken, "90000000-0000-4000-8000-000000000016"); !errors.Is(err, auth.ErrInvalidRefresh) {
+			t.Fatalf("disabled user refreshed: %v", err)
+		}
+		if err := service.ChangePassword(ctx, disabledClaims, "Test-Issuer-Operator!2026", "ChangedIssuerPassword!2026", "90000000-0000-4000-8000-000000000017"); !errors.Is(err, auth.ErrInvalidPassword) {
+			t.Fatalf("disabled user changed password: %v", err)
+		}
+
+		logout, logoutToken, _, err := service.Login(ctx, "issuer_readonly", "Test-Issuer-Readonly!2026", "90000000-0000-4000-8000-000000000006")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := service.Logout(ctx, logoutToken, "90000000-0000-4000-8000-000000000007"); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, _, err := service.Refresh(ctx, logoutToken, "90000000-0000-4000-8000-000000000008"); !errors.Is(err, auth.ErrInvalidRefresh) {
+			t.Fatalf("logout did not revoke refresh: %v", err)
+		}
+		_ = logout
+
+		passwordLogin, passwordToken, _, err := service.Login(ctx, "bank_readonly", "Test-Bank-Readonly!2026", "90000000-0000-4000-8000-000000000009")
+		if err != nil {
+			t.Fatal(err)
+		}
+		passwordClaims, err := service.ValidateAccess(passwordLogin.AccessToken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := service.ChangePassword(ctx, passwordClaims, "Test-Bank-Readonly!2026", "ChangedPassword!2026", "90000000-0000-4000-8000-000000000010"); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, _, err := service.Refresh(ctx, passwordToken, "90000000-0000-4000-8000-000000000011"); !errors.Is(err, auth.ErrInvalidRefresh) {
+			t.Fatalf("password change did not invalidate refresh family: %v", err)
+		}
+		if _, _, _, err := service.Login(ctx, "bank_readonly", "ChangedPassword!2026", "90000000-0000-4000-8000-000000000012"); err != nil {
+			t.Fatalf("changed password could not log in: %v", err)
+		}
+
+		expired, expiringToken, _, err := service.Login(ctx, "issuer_readonly", "Test-Issuer-Readonly!2026", "90000000-0000-4000-8000-000000000013")
+		if err != nil {
+			t.Fatal(err)
+		}
+		expiringClaims, err := service.ValidateAccess(expired.AccessToken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := authPool.Exec(ctx, "UPDATE control.auth_sessions SET expires_at=now()-interval '1 second' WHERE id=$1", expiringClaims.SessionID); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, _, err := service.Refresh(ctx, expiringToken, "90000000-0000-4000-8000-000000000014"); !errors.Is(err, auth.ErrInvalidRefresh) {
+			t.Fatalf("expired session refreshed: %v", err)
+		}
+
+		var details string
+		if err := authPool.QueryRow(ctx, "SELECT COALESCE(string_agg(details::text,' '),'') FROM control.authentication_audit_events WHERE request_id BETWEEN '90000000-0000-4000-8000-000000000001' AND '90000000-0000-4000-8000-000000000017'").Scan(&details); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(details, root) || strings.Contains(details, rotated) || strings.Contains(details, passwordToken) {
+			t.Fatal("authentication audit exposed a refresh token")
+		}
+	})
 	t.Run("live_readiness_outage_recovery", func(t *testing.T) {
-		handler := server.Handler(control.Ping, shard.Ping)
+		handler := server.Handler(control.Ping, control.Ping, shard.Ping, nil)
 		check := func(path string, want int) {
 			t.Helper()
 			w := httptest.NewRecorder()

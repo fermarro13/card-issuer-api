@@ -28,6 +28,7 @@ services:
       SHARD_DATABASE: ${SHARD_DATABASE:-card_issuer_shard_01}
       SHARD_ID: ${SHARD_ID:-shard_01}
       CONTROL_DB_PASSWORD: ${CONTROL_DB_PASSWORD:-Dev-Control-Reader!2026}
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-Dev-Auth-Runtime!2026}
       SHARD_DB_PASSWORD: ${SHARD_DB_PASSWORD:-Dev-Shard-Runtime!2026}
     depends_on:
       postgres:
@@ -46,9 +47,15 @@ services:
       CONTROL_DATABASE: ${CONTROL_DATABASE:-card_issuer_control}
       SHARD_DATABASE: ${SHARD_DATABASE:-card_issuer_shard_01}
       CONTROL_DB_USER: ci_app_control
+      AUTH_DATABASE: ${AUTH_DATABASE:-card_issuer_control}
+      AUTH_DB_USER: ci_app_auth
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-Dev-Auth-Runtime!2026}
       SHARD_DB_USER: ci_app_shard
       CONTROL_DB_PASSWORD: ${CONTROL_DB_PASSWORD:-Dev-Control-Reader!2026}
       SHARD_DB_PASSWORD: ${SHARD_DB_PASSWORD:-Dev-Shard-Runtime!2026}
+      AUTH_JWT_PRIVATE_KEY_B64: ${AUTH_JWT_PRIVATE_KEY_B64:?AUTH_JWT_PRIVATE_KEY_B64 is required}
+      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-card-issuer-api}
+      AUTH_JWT_AUDIENCE: ${AUTH_JWT_AUDIENCE:-card-issuer-api}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     depends_on:

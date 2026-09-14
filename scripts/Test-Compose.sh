@@ -33,7 +33,11 @@ compose() {
     SHARD_ID=shard_01 \
     POSTGRES_PASSWORD='Dev-Postgres-Admin!2026' \
     CONTROL_DB_PASSWORD='Dev-Control-Reader!2026' \
+    AUTH_DB_PASSWORD='Dev-Auth-Runtime!2026' \
     SHARD_DB_PASSWORD='Dev-Shard-Runtime!2026' \
+    AUTH_JWT_PRIVATE_KEY_B64='nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2DXWpgBgrEKt9VL/tPJZAc6DuFy89qmIyWvAhpo9wdRGg' \
+    AUTH_JWT_ISSUER='card-issuer-api' \
+    AUTH_JWT_AUDIENCE='card-issuer-api' \
     docker compose --project-name "$project" --project-directory "$root" --env-file "$root/.env.example" -f "$root/compose.yaml" "$@"
 }
 
@@ -74,7 +78,7 @@ assert_equal "$(query card_issuer_shard_01 'SELECT count(*) FROM ci_meta.schema_
 app_id=$(compose ps -q app | tr -d '\r\n')
 app_user=$(docker inspect --format '{{.Config.User}}' "$app_id")
 assert_equal "$app_user" '10001:10001' 'Application must run as non-root.'
-assert_equal "$(query postgres "SELECT count(*) FROM pg_roles WHERE rolname IN ('ci_app_control','ci_app_shard') AND NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication);")" 2 'Runtime privilege attributes are incorrect.'
+assert_equal "$(query postgres "SELECT count(*) FROM pg_roles WHERE rolname IN ('ci_app_control','ci_app_auth','ci_app_shard') AND NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication);")" 3 'Runtime privilege attributes are incorrect.'
 
 printf '%s\n' 'Checking retained data and passwords through down/up...'
 query card_issuer_control "UPDATE control.users SET password_hash=password_hash||'changed' WHERE normalized_username='bank_operator';" >/dev/null

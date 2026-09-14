@@ -8,5 +8,6 @@
 | 2026-09-10 | [Database Authentication and Authorization](2026-09-10-database-authentication-authorization.md) | Delivered (documentation only) |
 | 2026-09-10 | [PostgreSQL Creation Scripts](2026-09-10-postgresql-creation-scripts.md) | Implemented |
 | 2026-09-11 | [Docker Compose Development Environment](2026-09-11-docker-compose-environment.md) | Implemented; Docker acceptance pending |
+| 2026-09-13 | [Authentication Endpoints](2026-09-13-authentication-endpoints.md) | Implemented; QA pending PostgreSQL integration |
 
 Keep this index current whenever an approved plan is added, superseded, or completed.
