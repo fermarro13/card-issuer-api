@@ -32,15 +32,17 @@ const replayLifetime = 7 * 24 * time.Hour
 type API struct {
 	auth    auth.API
 	admin   *pgxpool.Pool // ci_auth_runtime: staff and controlled directory writes.
-	routing *pgxpool.Pool // ci_routing_reader: route lookups only.
+	control ControlStore
+	routing RoutingStore // ci_routing_reader: route lookups only.
+	reader  ShardReader
 	shard   *pgxpool.Pool
 	shardID string
 	key     []byte
 	now     func() time.Time
 }
 
-func New(authentication auth.API, admin, routing, shard *pgxpool.Pool, shardID string, cursorKey []byte) *API {
-	return &API{auth: authentication, admin: admin, routing: routing, shard: shard, shardID: shardID, key: append([]byte(nil), cursorKey...), now: time.Now}
+func New(authentication auth.API, admin *pgxpool.Pool, control ControlStore, routing RoutingStore, reader ShardReader, shard *pgxpool.Pool, shardID string, cursorKey []byte) *API {
+	return &API{auth: authentication, admin: admin, control: control, routing: routing, reader: reader, shard: shard, shardID: shardID, key: append([]byte(nil), cursorKey...), now: time.Now}
 }
 
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -99,36 +101,25 @@ func (a *API) banks(w http.ResponseWriter, r *http.Request, c auth.Claims) {
 	switch r.Method {
 	case http.MethodGet:
 		// Directory routes are the stable list source. Entity details are fetched with RLS below.
-		rows, err := a.routing.Query(r.Context(), "SELECT entity_id::text,shard_id,placement_status,created_at FROM control.bank_routing_entries ORDER BY created_at DESC,entity_id DESC")
+		routes, err := a.routing.Banks(r.Context())
 		if err != nil {
 			a.internal(w, r)
 			return
 		}
-		defer rows.Close()
 		data := make([]json.RawMessage, 0)
-		for rows.Next() {
-			var id, sid, status string
-			var created time.Time
-			if err := rows.Scan(&id, &sid, &status, &created); err != nil {
-				a.internal(w, r)
-				return
-			}
-			if sid != a.shardID {
+		for _, route := range routes {
+			if route.ShardID != a.shardID {
 				continue
 			}
-			entity, err := a.entity(r.Context(), id)
+			entity, err := a.entity(r.Context(), route.EntityID)
 			if err != nil {
 				continue
 			}
 			var m map[string]any
 			_ = json.Unmarshal(entity, &m)
-			m["routing_status"] = status
+			m["routing_status"] = route.PlacementStatus
 			raw, _ := json.Marshal(m)
 			data = append(data, raw)
-		}
-		if rows.Err() != nil {
-			a.internal(w, r)
-			return
 		}
 		a.collection(w, r, "banks", "directory", data)
 	case http.MethodPost:
@@ -237,25 +228,14 @@ func (a *API) users(w http.ResponseWriter, r *http.Request, c auth.Claims) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := a.admin.Query(r.Context(), "SELECT id::text,normalized_username,role,COALESCE(entity_id::text,''),status,created_at,updated_at FROM control.users ORDER BY created_at DESC,id DESC")
+		users, err := a.control.Users(r.Context())
 		if err != nil {
 			a.internal(w, r)
 			return
 		}
-		defer rows.Close()
 		data := make([]json.RawMessage, 0)
-		for rows.Next() {
-			var id, u, role, entity, status string
-			var created, updated time.Time
-			if err := rows.Scan(&id, &u, &role, &entity, &status, &created, &updated); err != nil {
-				a.internal(w, r)
-				return
-			}
-			data = append(data, userJSON(id, u, role, entity, status, created, updated))
-		}
-		if rows.Err() != nil {
-			a.internal(w, r)
-			return
+		for _, user := range users {
+			data = append(data, userJSON(user.ID, user.Username, user.Role, user.EntityID, user.Status, user.CreatedAt, user.UpdatedAt))
 		}
 		a.collection(w, r, "users", "control", data)
 	case http.MethodPost:
@@ -415,19 +395,19 @@ func (a *API) reference(w http.ResponseWriter, r *http.Request, c auth.Claims, b
 	a.notFound(w, r)
 }
 
-func refSQL(kind string) (table, fields string) {
+func (a *API) listReference(w http.ResponseWriter, r *http.Request, bank, kind string) {
+	var (
+		raws []json.RawMessage
+		err  error
+	)
 	switch kind {
 	case "card-products":
-		return "bank.card_products", "id::text,product_code,name,status,configuration,configuration_version,created_at,updated_at"
+		raws, err = a.list(r.Context(), bank, kind, "SELECT row_to_json(q)::text FROM (SELECT id::text,product_code,name,status,configuration,configuration_version,created_at,updated_at FROM bank.card_products WHERE entity_id=$1 ORDER BY created_at DESC,id DESC) q", nil)
 	case "clients":
-		return "bank.clients", "id::text,external_client_ref,display_name,created_at,updated_at"
+		raws, err = a.list(r.Context(), bank, kind, "SELECT row_to_json(q)::text FROM (SELECT id::text,external_client_ref,display_name,created_at,updated_at FROM bank.clients WHERE entity_id=$1 ORDER BY created_at DESC,id DESC) q", nil)
 	default:
-		return "bank.account_references", "id::text,client_id::text,external_account_ref,created_at,updated_at"
+		raws, err = a.list(r.Context(), bank, kind, "SELECT row_to_json(q)::text FROM (SELECT id::text,client_id::text,external_account_ref,created_at,updated_at FROM bank.account_references WHERE entity_id=$1 ORDER BY created_at DESC,id DESC) q", nil)
 	}
-}
-func (a *API) listReference(w http.ResponseWriter, r *http.Request, bank, kind string) {
-	table, fields := refSQL(kind)
-	raws, err := a.list(r.Context(), bank, kind, "SELECT "+fields+" FROM "+table+" WHERE entity_id=$1 ORDER BY created_at DESC,id DESC", nil)
 	if err != nil {
 		a.handle(w, r, err)
 		return
@@ -435,8 +415,18 @@ func (a *API) listReference(w http.ResponseWriter, r *http.Request, bank, kind s
 	a.collection(w, r, kind, bank, raws)
 }
 func (a *API) getReference(w http.ResponseWriter, r *http.Request, bank, kind, id string) {
-	table, fields := refSQL(kind)
-	raw, err := a.one(r.Context(), bank, "SELECT "+fields+" FROM "+table+" WHERE entity_id=$1 AND id=$2", id)
+	var (
+		raw json.RawMessage
+		err error
+	)
+	switch kind {
+	case "card-products":
+		raw, err = a.one(r.Context(), bank, "SELECT row_to_json(q)::text FROM (SELECT id::text,product_code,name,status,configuration,configuration_version,created_at,updated_at FROM bank.card_products WHERE entity_id=$1 AND id=$2) q", bank, id)
+	case "clients":
+		raw, err = a.one(r.Context(), bank, "SELECT row_to_json(q)::text FROM (SELECT id::text,external_client_ref,display_name,created_at,updated_at FROM bank.clients WHERE entity_id=$1 AND id=$2) q", bank, id)
+	default:
+		raw, err = a.one(r.Context(), bank, "SELECT row_to_json(q)::text FROM (SELECT id::text,client_id::text,external_account_ref,created_at,updated_at FROM bank.account_references WHERE entity_id=$1 AND id=$2) q", bank, id)
+	}
 	if err != nil {
 		a.notFound(w, r)
 		return
@@ -600,30 +590,30 @@ func (a *API) cards(w http.ResponseWriter, r *http.Request, c auth.Claims, bank 
 
 func (a *API) listCards(w http.ResponseWriter, r *http.Request, bank string) {
 	q := r.URL.Query()
-	args := []any{bank}
-	where := []string{"entity_id=$1"}
-	for _, p := range []string{"client_id", "account_reference_id", "product_id"} {
-		if v := q.Get(p); v != "" {
-			if !uuid(v) {
-				a.invalid(w, r, "Invalid card filter.")
-				return
-			}
-			args = append(args, v)
-			where = append(where, p+"=$"+strconv.Itoa(len(args)))
-		}
-	}
-	if status := q.Get("status"); status != "" {
-		if !cardStatus(status) {
-			a.invalid(w, r, "Invalid card status.")
+	filter := CardFilter{ClientID: q.Get("client_id"), AccountID: q.Get("account_reference_id"), ProductID: q.Get("product_id"), Status: q.Get("status")}
+	for _, value := range []string{filter.ClientID, filter.AccountID, filter.ProductID} {
+		if value != "" && !uuid(value) {
+			a.invalid(w, r, "Invalid card filter.")
 			return
 		}
-		args = append(args, status)
-		where = append(where, "status=$"+strconv.Itoa(len(args)))
 	}
-	raws, err := a.list(r.Context(), bank, "cards", "SELECT id::text,client_id::text,account_reference_id::text,product_id::text,status,predecessor_card_id::text,issued_at,activated_at,suspended_at,closed_at,expires_at,version,created_at,updated_at FROM bank.cards WHERE "+strings.Join(where, " AND ")+" ORDER BY created_at DESC,id DESC", args[1:])
+	if filter.Status != "" && !cardStatus(filter.Status) {
+		a.invalid(w, r, "Invalid card status.")
+		return
+	}
+	cards, err := a.reader.Cards(r.Context(), bank, filter)
 	if err != nil {
 		a.handle(w, r, err)
 		return
+	}
+	raws := make([]json.RawMessage, 0, len(cards))
+	for _, card := range cards {
+		raw, err := json.Marshal(card)
+		if err != nil {
+			a.handle(w, r, err)
+			return
+		}
+		raws = append(raws, raw)
 	}
 	a.collection(w, r, "cards", bank, raws)
 }
@@ -672,9 +662,9 @@ func (a *API) command(w http.ResponseWriter, r *http.Request, c auth.Claims, ban
 	server.WriteJSON(w, status, raw)
 }
 func (a *API) history(w http.ResponseWriter, r *http.Request, bank, id string, history bool) {
-	query := "SELECT id::text,action,status,reason,created_at,completed_at FROM bank.card_operations WHERE entity_id=$1 AND card_id=$2 ORDER BY created_at DESC,id DESC"
+	query := "SELECT row_to_json(q)::text FROM (SELECT id::text,action,status,reason,created_at,completed_at FROM bank.card_operations WHERE entity_id=$1 AND card_id=$2 ORDER BY created_at DESC,id DESC) q"
 	if history {
-		query = "SELECT id::text,previous_status,new_status,reason,created_at FROM bank.card_status_history WHERE entity_id=$1 AND card_id=$2 ORDER BY created_at DESC,id DESC"
+		query = "SELECT row_to_json(q)::text FROM (SELECT id::text,previous_status,new_status,reason,created_at FROM bank.card_status_history WHERE entity_id=$1 AND card_id=$2 ORDER BY created_at DESC,id DESC) q"
 	}
 	raws, err := a.list(r.Context(), bank, "history", query, []any{id})
 	if err != nil {
@@ -727,7 +717,7 @@ func (a *API) tenantTx(ctx context.Context, bank string) (pgx.Tx, error) {
 	return tx, nil
 }
 func (a *API) entity(ctx context.Context, id string) (json.RawMessage, error) {
-	return a.one(ctx, id, "SELECT id::text,bank_reference,name,status,created_at,updated_at FROM bank.entities WHERE id=$1", id)
+	return a.one(ctx, id, "SELECT row_to_json(q)::text FROM (SELECT id::text,bank_reference,name,status,created_at,updated_at FROM bank.entities WHERE id=$1) q", id)
 }
 func (a *API) one(ctx context.Context, bank, query string, args ...any) (json.RawMessage, error) {
 	tx, err := a.tenantTx(ctx, bank)
@@ -736,7 +726,7 @@ func (a *API) one(ctx context.Context, bank, query string, args ...any) (json.Ra
 	}
 	defer tx.Rollback(ctx)
 	var raw string
-	err = tx.QueryRow(ctx, "SELECT row_to_json(q)::text FROM ("+query+") q", args...).Scan(&raw)
+	err = tx.QueryRow(ctx, query, args...).Scan(&raw)
 	if err != nil {
 		return nil, err
 	}
@@ -752,7 +742,7 @@ func (a *API) list(ctx context.Context, bank, kind, query string, args []any) ([
 	}
 	defer tx.Rollback(ctx)
 	all := append([]any{bank}, args...)
-	rows, err := tx.Query(ctx, "SELECT row_to_json(q)::text FROM ("+query+") q", all...)
+	rows, err := tx.Query(ctx, query, all...)
 	if err != nil {
 		return nil, err
 	}
@@ -883,14 +873,12 @@ func (a *API) allowedBank(c auth.Claims, bank string) bool {
 	return c.EntityID == bank && a.activeBank(context.Background(), bank)
 }
 func (a *API) activeBank(ctx context.Context, bank string) bool {
-	var n int
-	err := a.routing.QueryRow(ctx, "SELECT count(*) FROM control.bank_routing_entries WHERE entity_id=$1 AND shard_id=$2 AND placement_status='active'", bank, a.shardID).Scan(&n)
-	return err == nil && n == 1
+	ok, err := a.routing.HasActiveRoute(ctx, bank, a.shardID)
+	return err == nil && ok
 }
 func (a *API) activeOrProvisioning(ctx context.Context, bank string) bool {
-	var n int
-	err := a.routing.QueryRow(ctx, "SELECT count(*) FROM control.bank_routing_entries WHERE entity_id=$1 AND shard_id=$2 AND placement_status IN ('active','paused','provisioning')", bank, a.shardID).Scan(&n)
-	return err == nil && n == 1
+	ok, err := a.routing.HasActiveOrProvisioningRoute(ctx, bank, a.shardID)
+	return err == nil && ok
 }
 
 func fingerprint(b []byte) []byte { s := sha256.Sum256(b); return s[:] }
@@ -978,9 +966,9 @@ func (a *API) provisionBank(ctx context.Context, c auth.Claims, key string, body
 			return http.StatusCreated, replay, nil
 		}
 	} else {
-		id, newErr := newUUID()
-		if newErr != nil {
-			return 0, nil, newErr
+		id, err = newUUID()
+		if err != nil {
+			return 0, nil, err
 		}
 		if _, err = tx.Exec(ctx, "INSERT INTO control.bank_routing_entries(entity_id,shard_id,placement_status) VALUES ($1,$2,'provisioning')", id, a.shardID); err != nil {
 			return 0, nil, err
@@ -1266,22 +1254,21 @@ func (a *API) mutateRef(ctx context.Context, c auth.Claims, bank, kind, key stri
 	if err = tx.QueryRow(ctx, query, all...).Scan(&id); err != nil {
 		return nil, err
 	}
-	table, fields := refSQL(kind)
-	var raw string
-	if err = tx.QueryRow(ctx, "SELECT row_to_json(q)::text FROM (SELECT "+fields+" FROM "+table+" WHERE entity_id=$1 AND id=$2) q", bank, id).Scan(&raw); err != nil {
+	raw, err := referenceJSON(ctx, tx, bank, kind, id)
+	if err != nil {
 		return nil, err
 	}
 	if _, err = tx.Exec(ctx, "INSERT INTO bank.audit_events(entity_id,actor_user_id,actor_role,action,resource_type,resource_id,outcome,request_id) VALUES ($1,$2,'issuer_operator',$3,$4,$5,'succeeded',$6)", bank, c.UserID, kind+".create", kind, id, request); err != nil {
 		return nil, err
 	}
-	if err = finishShard(ctx, tx, bank, scope, key, http.StatusCreated, json.RawMessage(raw), id, c.UserID); err != nil {
+	if err = finishShard(ctx, tx, bank, scope, key, http.StatusCreated, raw, id, c.UserID); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	_ = status
-	return json.RawMessage(raw), nil
+	return raw, nil
 }
 func (a *API) patchRef(ctx context.Context, c auth.Claims, bank, kind, id, key string, input any, query string, args []any, request string) (json.RawMessage, error) {
 	body, err := normalized(input)
@@ -1309,25 +1296,51 @@ func (a *API) patchRef(ctx context.Context, c auth.Claims, bank, kind, id, key s
 	if tag.RowsAffected() != 1 {
 		return nil, problem(http.StatusNotFound, "not_found", "The requested resource does not exist.")
 	}
-	table, fields := refSQL(kind)
-	var raw string
-	if err = tx.QueryRow(ctx, "SELECT row_to_json(q)::text FROM (SELECT "+fields+" FROM "+table+" WHERE entity_id=$1 AND id=$2) q", bank, id).Scan(&raw); err != nil {
+	raw, err := referenceJSON(ctx, tx, bank, kind, id)
+	if err != nil {
 		return nil, err
 	}
 	if _, err = tx.Exec(ctx, "INSERT INTO bank.audit_events(entity_id,actor_user_id,actor_role,action,resource_type,resource_id,outcome,request_id) VALUES ($1,$2,'issuer_operator',$3,$4,$5,'succeeded',$6)", bank, c.UserID, kind+".patch", kind, id, request); err != nil {
 		return nil, err
 	}
-	if err = finishShard(ctx, tx, bank, scope, key, http.StatusOK, json.RawMessage(raw), id, c.UserID); err != nil {
+	if err = finishShard(ctx, tx, bank, scope, key, http.StatusOK, raw, id, c.UserID); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func referenceJSON(ctx context.Context, tx pgx.Tx, bank, kind, id string) (json.RawMessage, error) {
+	var raw string
+	var err error
+	switch kind {
+	case "card-products":
+		err = tx.QueryRow(ctx, "SELECT row_to_json(q)::text FROM (SELECT id::text,product_code,name,status,configuration,configuration_version,created_at,updated_at FROM bank.card_products WHERE entity_id=$1 AND id=$2) q", bank, id).Scan(&raw)
+	case "clients":
+		err = tx.QueryRow(ctx, "SELECT row_to_json(q)::text FROM (SELECT id::text,external_client_ref,display_name,created_at,updated_at FROM bank.clients WHERE entity_id=$1 AND id=$2) q", bank, id).Scan(&raw)
+	case "account-references":
+		err = tx.QueryRow(ctx, "SELECT row_to_json(q)::text FROM (SELECT id::text,client_id::text,external_account_ref,created_at,updated_at FROM bank.account_references WHERE entity_id=$1 AND id=$2) q", bank, id).Scan(&raw)
+	default:
+		return nil, fmt.Errorf("unsupported reference kind %q", kind)
+	}
+	if err != nil {
 		return nil, err
 	}
 	return json.RawMessage(raw), nil
 }
 
 func (a *API) card(ctx context.Context, bank, id string) (json.RawMessage, error) {
-	return a.one(ctx, bank, "SELECT id::text,client_id::text,account_reference_id::text,product_id::text,status,predecessor_card_id::text,issued_at,activated_at,suspended_at,closed_at,expires_at,version,created_at,updated_at FROM bank.cards WHERE entity_id=$1 AND id=$2", id)
+	card, err := a.reader.Card(ctx, bank, id)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(card)
+	if err != nil {
+		return nil, fmt.Errorf("encode card: %w", err)
+	}
+	return raw, nil
 }
 func newUUID() (string, error) {
 	b := make([]byte, 16)
@@ -1466,6 +1479,26 @@ func transition(current, action string) (string, bool, bool) { // target, valid,
 	}
 	return "", false, false
 }
+
+// updateCardTransition selects a closed query variant for each supported action.
+// SQL identifiers are never constructed from request data.
+func updateCardTransition(ctx context.Context, tx pgx.Tx, action, bank, id, target, actor string) error {
+	var err error
+	switch action {
+	case "activate":
+		_, err = tx.Exec(ctx, "UPDATE bank.cards SET status=$3,activated_at=clock_timestamp(),version=version+1,updated_by=$4 WHERE entity_id=$1 AND id=$2", bank, id, target, actor)
+	case "suspend":
+		_, err = tx.Exec(ctx, "UPDATE bank.cards SET status=$3,suspended_at=clock_timestamp(),version=version+1,updated_by=$4 WHERE entity_id=$1 AND id=$2", bank, id, target, actor)
+	case "close":
+		_, err = tx.Exec(ctx, "UPDATE bank.cards SET status=$3,closed_at=clock_timestamp(),version=version+1,updated_by=$4 WHERE entity_id=$1 AND id=$2", bank, id, target, actor)
+	case "resume":
+		_, err = tx.Exec(ctx, "UPDATE bank.cards SET status=$3,version=version+1,updated_by=$4 WHERE entity_id=$1 AND id=$2", bank, id, target, actor)
+	default:
+		return fmt.Errorf("unsupported card transition action %q", action)
+	}
+	return err
+}
+
 func (a *API) cardCommand(ctx context.Context, c auth.Claims, bank, id, action, key string, body []byte, reason, request string) (json.RawMessage, int, error) {
 	tx, err := a.tenantTx(ctx, bank)
 	if err != nil {
@@ -1560,14 +1593,7 @@ func (a *API) cardCommand(ctx context.Context, c auth.Claims, bank, id, action, 
 		return nil, 0, err
 	}
 	if !ignored {
-		field := map[string]string{"activate": "activated_at", "suspend": "suspended_at", "close": "closed_at"}[action]
-		query := "UPDATE bank.cards SET status=$3,version=version+1,updated_by=$4"
-		if field != "" {
-			query += "," + field + "=clock_timestamp()"
-		}
-		query += " WHERE entity_id=$1 AND id=$2"
-		_, err = tx.Exec(ctx, query, bank, id, target, c.UserID)
-		if err != nil {
+		if err = updateCardTransition(ctx, tx, action, bank, id, target, c.UserID); err != nil {
 			return nil, 0, err
 		}
 		_, err = tx.Exec(ctx, "INSERT INTO bank.card_status_history(entity_id,card_id,operation_id,previous_status,new_status,reason,actor_user_id,actor_role,actor_entity_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)", bank, id, opID, current, target, reason, c.UserID, c.Role, actorEntity(c))

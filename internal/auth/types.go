@@ -14,6 +14,7 @@ var (
 	ErrInvalidAccess      = errors.New("invalid access token")
 	ErrInvalidPassword    = errors.New("invalid current password")
 	ErrPasswordPolicy     = errors.New("password does not meet policy")
+	ErrNotFound           = errors.New("auth record not found")
 )
 
 type UserSummary struct {

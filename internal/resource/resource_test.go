@@ -31,7 +31,7 @@ func (t testAuth) ChangePassword(context.Context, auth.Claims, string, string, s
 func (t testAuth) ValidateAccess(string) (auth.Claims, error) { return t.claims, t.err }
 
 func TestDirectoryAndStaffRejectNonIssuerOperator(t *testing.T) {
-	a := New(testAuth{claims: auth.Claims{UserSummary: auth.UserSummary{Role: "issuer_readonly", Status: "enabled"}}}, nil, nil, nil, "shard_01", make([]byte, 32))
+	a := New(testAuth{claims: auth.Claims{UserSummary: auth.UserSummary{Role: "issuer_readonly", Status: "enabled"}}}, nil, nil, nil, nil, nil, "shard_01", make([]byte, 32))
 	for _, path := range []string{"/v1/banks", "/v1/users"} {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		r.Header.Set("Authorization", "Bearer token")
@@ -44,7 +44,7 @@ func TestDirectoryAndStaffRejectNonIssuerOperator(t *testing.T) {
 }
 
 func TestMissingIdempotencyKeyIsRejectedBeforeMutation(t *testing.T) {
-	a := New(testAuth{claims: auth.Claims{UserSummary: auth.UserSummary{Role: "issuer_operator", Status: "enabled"}}}, nil, nil, nil, "shard_01", make([]byte, 32))
+	a := New(testAuth{claims: auth.Claims{UserSummary: auth.UserSummary{Role: "issuer_operator", Status: "enabled"}}}, nil, nil, nil, nil, nil, "shard_01", make([]byte, 32))
 	r := httptest.NewRequest(http.MethodPost, "/v1/users", strings.NewReader(`{"username":"new.user","password":"ValidPassword!2026","role":"issuer_readonly","entity_id":""}`))
 	r.Header.Set("Authorization", "Bearer token")
 	r.Header.Set("Content-Type", "application/json")
@@ -56,7 +56,7 @@ func TestMissingIdempotencyKeyIsRejectedBeforeMutation(t *testing.T) {
 }
 
 func TestCursorIsTamperAndScopeBound(t *testing.T) {
-	a := New(nil, nil, nil, nil, "shard_01", []byte("01234567890123456789012345678901"))
+	a := New(nil, nil, nil, nil, nil, nil, "shard_01", []byte("01234567890123456789012345678901"))
 	token := a.cursorEncode(cursor{Kind: "cards", Bank: "10000000-0000-4000-8000-000000000001", Filter: "status=active", Created: "2026-09-13T00:00:00Z", ID: "20000000-0000-4000-8000-000000000001"})
 	if _, err := a.cursorDecode(token, "cards", "10000000-0000-4000-8000-000000000001", "status=active"); err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestCursorIsTamperAndScopeBound(t *testing.T) {
 }
 
 func TestCollectionCursorUsesTimestampOrderIncludingFractions(t *testing.T) {
-	a := New(nil, nil, nil, nil, "shard_01", []byte("01234567890123456789012345678901"))
+	a := New(nil, nil, nil, nil, nil, nil, "shard_01", []byte("01234567890123456789012345678901"))
 	data := []json.RawMessage{
 		json.RawMessage(`{"id":"20000000-0000-4000-8000-000000000001","created_at":"2026-09-13T00:00:00.1Z"}`),
 		json.RawMessage(`{"id":"20000000-0000-4000-8000-000000000002","created_at":"2026-09-13T00:00:00Z"}`),

@@ -19,6 +19,10 @@ import (
 
 	"card-issuer-api/internal/auth"
 	"card-issuer-api/internal/database"
+	authrepository "card-issuer-api/internal/repository/auth"
+	controlrepository "card-issuer-api/internal/repository/control"
+	routingrepository "card-issuer-api/internal/repository/routing"
+	shardrepository "card-issuer-api/internal/repository/shard"
 	"card-issuer-api/internal/resource"
 	"card-issuer-api/internal/server"
 )
@@ -40,15 +44,19 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 	}
 	prefix := fmt.Sprintf("ci_env_%d", time.Now().UnixNano())
 	controlDB, shardDB := prefix+"_control", prefix+"_shard"
-	sql := func(db, query string) (string, error) {
-		cmd := exec.Command(psql, "-X", "-w", "-qAt", "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=sqlstate", "-d", db)
+	sql := func(db, query string, variables ...string) (string, error) {
+		args := []string{"-X", "-w", "-qAt", "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=sqlstate", "-d", db}
+		for _, variable := range variables {
+			args = append(args, "-v", variable)
+		}
+		cmd := exec.Command(psql, args...)
 		cmd.Stdin = strings.NewReader(query)
 		out, err := cmd.CombinedOutput()
 		return strings.TrimSpace(string(out)), err
 	}
-	mustSQL := func(db, query string) string {
+	mustSQL := func(db, query string, variables ...string) string {
 		t.Helper()
-		out, err := sql(db, query)
+		out, err := sql(db, query, variables...)
 		if err != nil {
 			t.Fatalf("database check failed: %v %s", err, out)
 		}
@@ -152,7 +160,7 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		service := auth.NewService(authPool, signer)
+		service := auth.NewService(authrepository.New(authPool), signer)
 		login, root, _, err := service.Login(ctx, "issuer_operator", "Test-Issuer-Operator!2026", "90000000-0000-4000-8000-000000000001")
 		if err != nil || login.User.Username != "issuer_operator" || root == "" {
 			t.Fatalf("login failed: %v", err)
@@ -289,12 +297,12 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		service := auth.NewService(authPool, signer)
+		service := auth.NewService(authrepository.New(authPool), signer)
 		login, _, _, err := service.Login(ctx, "issuer_operator", "Test-Issuer-Operator!2026", "90000000-0000-4000-8000-000000000101")
 		if err != nil {
 			t.Fatal(err)
 		}
-		business := resource.New(service, authPool, control, shard, "shard_01", make([]byte, 32))
+		business := resource.New(service, authPool, controlrepository.New(authPool), routingrepository.New(control), shardrepository.NewReader(shard), shard, "shard_01", make([]byte, 32))
 		handler := server.Handler(authPool.Ping, control.Ping, shard.Ping, service, business)
 		request := func(method, path, body, key string) *httptest.ResponseRecorder {
 			r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -309,9 +317,34 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 			handler.ServeHTTP(w, r)
 			return w
 		}
+		provisionBody := `{"bank_reference":"RESOURCE_PROVISION_TEST","name":"Resource Provision Test"}`
+		provisioned := request(http.MethodPost, "/v1/banks", provisionBody, "resource-provision")
+		if provisioned.Code != http.StatusCreated {
+			t.Fatalf("bank provision: %d %s", provisioned.Code, provisioned.Body.String())
+		}
+		var provisionedBank map[string]any
+		if err := json.Unmarshal(provisioned.Body.Bytes(), &provisionedBank); err != nil {
+			t.Fatal(err)
+		}
+		provisionedID, _ := provisionedBank["id"].(string)
+		if provisionedID == "" {
+			t.Fatalf("provision response missing bank id: %s", provisioned.Body.String())
+		}
+		replayedProvision := request(http.MethodPost, "/v1/banks", provisionBody, "resource-provision")
+		if replayedProvision.Code != http.StatusCreated || replayedProvision.Body.String() != provisioned.Body.String() {
+			t.Fatalf("bank provision replay: %d %s", replayedProvision.Code, replayedProvision.Body.String())
+		}
+		provisionedGet := request(http.MethodGet, "/v1/banks/"+provisionedID, "", "")
+		if provisionedGet.Code != http.StatusOK {
+			t.Fatalf("provisioned bank read: %d %s", provisionedGet.Code, provisionedGet.Body.String())
+		}
 		bank := request(http.MethodGet, "/v1/banks/10000000-0000-4000-8000-000000000001", "", "")
 		if bank.Code != http.StatusOK {
 			t.Fatalf("bank directory read: %d %s", bank.Code, bank.Body.String())
+		}
+		bankPatch := request(http.MethodPatch, "/v1/banks/10000000-0000-4000-8000-000000000001", `{"name":"Resource Test Bank"}`, "resource-bank-patch")
+		if bankPatch.Code != http.StatusOK {
+			t.Fatalf("bank patch: %d %s", bankPatch.Code, bankPatch.Body.String())
 		}
 		product := request(http.MethodPost, "/v1/banks/10000000-0000-4000-8000-000000000001/card-products", `{"product_code":"RESOURCE_TEST","name":"Resource Test","configuration":{}}`, "resource-product")
 		if product.Code != http.StatusCreated {
@@ -333,6 +366,10 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 			return value
 		}
 		productID, clientID := id(product.Body.String()), id(client.Body.String())
+		productGet := request(http.MethodGet, "/v1/banks/10000000-0000-4000-8000-000000000001/card-products/"+productID, "", "")
+		if productGet.Code != http.StatusOK {
+			t.Fatalf("product read: %d %s", productGet.Code, productGet.Body.String())
+		}
 		account := request(http.MethodPost, "/v1/banks/10000000-0000-4000-8000-000000000001/account-references", `{"client_id":"`+clientID+`","external_account_ref":"resource-account"}`, "resource-account")
 		if account.Code != http.StatusCreated {
 			t.Fatalf("account create: %d %s", account.Code, account.Body.String())
@@ -382,7 +419,7 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 		// Disable only this disposable database and disconnect its pool to simulate unavailability.
 		mustSQL("postgres", fmt.Sprintf(`ALTER DATABASE %q ALLOW_CONNECTIONS false;`, shardDB))
 		defer mustSQL("postgres", fmt.Sprintf(`ALTER DATABASE %q ALLOW_CONNECTIONS true;`, shardDB))
-		mustSQL("postgres", fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='%s';", shardDB))
+		mustSQL("postgres", "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=:'database_name';", "database_name="+shardDB)
 		shard.Reset()
 		check("/health/live", 200)
 		check("/health/ready", 503)
