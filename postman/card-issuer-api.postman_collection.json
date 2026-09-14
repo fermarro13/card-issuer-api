@@ -1,0 +1,147 @@
+{
+  "info": {
+    "_postman_id": "8ea3a2e9-34c4-4a41-bdd7-c6845df18fe6",
+    "name": "Card Issuer API",
+    "description": "Colección para los endpoints implementados. Configure base_url para el entorno objetivo. Las credenciales iniciales son exclusivamente las cuentas seed de desarrollo documentadas en database/TEST-CREDENTIALS.md.\n\nLos POST de autenticación no requieren Idempotency-Key. Login y refresh devuelven access_token; los scripts de prueba lo guardan en la variable de colección access_token. El refresh token nunca se devuelve en JSON: Postman debe conservar la cookie __Host-card-issuer-refresh de login. Para una API HTTP local, use el administrador de cookies de Postman o configure HTTPS, ya que la cookie es Secure.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8080", "type": "string" },
+    { "key": "username", "value": "issuer_operator", "type": "string" },
+    { "key": "password", "value": "Test-Issuer-Operator!2026", "type": "string" },
+    { "key": "new_password", "value": "ChangeThisPassword!2026", "type": "string" },
+    { "key": "access_token", "value": "", "type": "string" },
+    { "key": "request_id", "value": "90000000-0000-4000-8000-000000000001", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Live",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/health/live",
+            "description": "No requiere parámetros, cuerpo ni autenticación. Devuelve 200 con { status: ok } cuando el proceso está activo."
+          }
+        },
+        {
+          "name": "Ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/health/ready",
+            "description": "No requiere parámetros, cuerpo ni autenticación. Devuelve 200 con { status: ready } cuando las tres conexiones de base de datos están disponibles, o 503 con not_ready."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns an access token', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var body = pm.response.json();",
+                  "    pm.expect(body.access_token).to.be.a('string').and.not.empty;",
+                  "    pm.collectionVariables.set('access_token', body.access_token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Request-ID", "value": "{{request_id}}", "description": "UUID canónico opcional. Si se omite o no es válido, la API genera uno." }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/v1/auth/login",
+            "description": "Cuerpo requerido: username y password. No tiene parámetros de ruta o query. Devuelve access_token, token_type, expires_at y user; también establece la cookie HttpOnly __Host-card-issuer-refresh."
+          }
+        },
+        {
+          "name": "Refresh access token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('rotates the access token', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var body = pm.response.json();",
+                  "    pm.expect(body.access_token).to.be.a('string').and.not.empty;",
+                  "    pm.collectionVariables.set('access_token', body.access_token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-Request-ID", "value": "{{request_id}}" }
+            ],
+            "url": "{{base_url}}/v1/auth/refresh",
+            "description": "No requiere cuerpo ni parámetros. Requiere la cookie __Host-card-issuer-refresh creada por Login; Postman debe conservarla en su cookie jar. La respuesta rota esa cookie y devuelve un access token nuevo."
+          }
+        },
+        {
+          "name": "Current user",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
+              { "key": "X-Request-ID", "value": "{{request_id}}" }
+            ],
+            "url": "{{base_url}}/v1/me",
+            "description": "No requiere cuerpo ni parámetros. Requiere Authorization: Bearer <access token>. Devuelve exclusivamente username, status y role."
+          }
+        },
+        {
+          "name": "Change password",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Request-ID", "value": "{{request_id}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"current_password\": \"{{password}}\",\n  \"new_password\": \"{{new_password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/v1/me/password",
+            "description": "Cuerpo requerido: current_password y new_password; no tiene parámetros de ruta o query. La nueva contraseña debe tener 13+ caracteres Unicode, una mayúscula, un número y un símbolo/puntuación. Devuelve 204 e invalida las familias de refresh; actualice password y new_password antes de volver a ejecutar Login."
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-Request-ID", "value": "{{request_id}}" }
+            ],
+            "url": "{{base_url}}/v1/auth/logout",
+            "description": "No requiere cuerpo ni parámetros. Usa la cookie __Host-card-issuer-refresh si está presente, revoca su sesión y siempre limpia la cookie. Devuelve 204 incluso si no hay cookie o es inválida."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -258,8 +258,14 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := authPool.Exec(ctx, "UPDATE control.auth_sessions SET expires_at=now()-interval '1 second' WHERE id=$1", expiringClaims.SessionID); err != nil {
-			t.Fatal(err)
+		// The schema correctly makes a session's absolute expiry immutable. This
+		// disposable-database test temporarily bypasses that guard to create an
+		// expired-session fixture without weakening the production invariant.
+		mustSQL(controlDB, "ALTER TABLE control.auth_sessions DISABLE TRIGGER guard_session;")
+		_, expireErr := authPool.Exec(ctx, "UPDATE control.auth_sessions SET created_at=now()-interval '7 days', last_refreshed_at=now()-interval '7 days', expires_at=now()-interval '1 second' WHERE id=$1", expiringClaims.SessionID)
+		mustSQL(controlDB, "ALTER TABLE control.auth_sessions ENABLE TRIGGER guard_session;")
+		if expireErr != nil {
+			t.Fatal(expireErr)
 		}
 		if _, _, _, err := service.Refresh(ctx, expiringToken, "90000000-0000-4000-8000-000000000014"); !errors.Is(err, auth.ErrInvalidRefresh) {
 			t.Fatalf("expired session refreshed: %v", err)

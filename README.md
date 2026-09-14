@@ -1,6 +1,6 @@
 # Card Issuer API
 
-Start the complete local development environment after supplying an application-owned Ed25519 signing key:
+Start the complete local proof-of-concept environment:
 
 ```bash
 docker compose up --build
@@ -8,7 +8,7 @@ docker compose up --build
 
 Use Docker Desktop with Linux containers on Windows or macOS, or Docker Engine with Compose v2 on Linux. Go and PostgreSQL run inside the images; neither is required on the host for this command. The initial image download/build requires internet access.
 
-Set `AUTH_JWT_PRIVATE_KEY_B64` to a base64-encoded 64-byte Ed25519 private key before running Compose. It is required and must come from your local secret store or deployment secret configuration; do not commit it. `AUTH_JWT_ISSUER` and `AUTH_JWT_AUDIENCE` default to `card-issuer-api` and should be set explicitly in production.
+Compose includes a deliberately public base64-encoded 64-byte Ed25519 development key, so no JWT setup is required for local POC startup. **It must never be used in production.** Production deployments must inject a unique `AUTH_JWT_PRIVATE_KEY_B64` through their secret configuration. `AUTH_JWT_ISSUER` and `AUTH_JWT_AUDIENCE` default to `card-issuer-api` and should be set explicitly in production.
 
 The API is available at [http://localhost:8080/health/live](http://localhost:8080/health/live). [Readiness](http://localhost:8080/health/ready) checks the authentication, routing, and shard database connections.
 
@@ -33,11 +33,15 @@ Both databases remain distinct: `card_issuer_control` stores routing/authenticat
 
 The application keeps running during a database outage and becomes ready again when both connections recover. Database details and credentials are excluded from HTTP responses. Each pool is limited to five connections. HTTP requests and graceful shutdown have bounded timeouts.
 
+## Postman
+
+Import [postman/card-issuer-api.postman_collection.json](postman/card-issuer-api.postman_collection.json) into Postman. It includes every currently implemented health and authentication endpoint, collection variables, request-body examples, bearer-token capture, and refresh-cookie guidance.
+
 ## Development credentials and overrides
 
 The four application test accounts are documented in [database/TEST-CREDENTIALS.md](database/TEST-CREDENTIALS.md). Both bank users belong to Test Bank. These accounts are distinct from PostgreSQL connection accounts.
 
-The following deliberately public database defaults support local startup once the required JWT key is configured:
+The following deliberately public database defaults support local POC startup:
 
 | PostgreSQL account | Default password | Purpose |
 | --- | --- | --- |
@@ -48,7 +52,7 @@ The following deliberately public database defaults support local startup once t
 
 The app receives three separate runtime passwords. Runtime accounts have no ownership, role/database creation, superuser, replication or RLS bypass privileges.
 
-Copy `.env.example` to `.env` before first startup, set `AUTH_JWT_PRIVATE_KEY_B64`, and optionally override the API port, database names, shard ID or technical passwords. `.env` is ignored by Git and excluded from image builds. Keep these values local to development.
+Copy `.env.example` to `.env` only when you want to override the API port, database names, shard ID, technical passwords, or the POC JWT key. `.env` is ignored by Git and excluded from image builds. Set a unique `AUTH_JWT_PRIVATE_KEY_B64` from secret configuration in every production deployment; never use the committed POC key.
 
 **Existing volumes retain passwords.** Changing `POSTGRES_PASSWORD` in `.env` does not change an initialized PostgreSQL administrator password. Runtime account provisioning also preserves existing technical passwords and verifies the supplied credentials; a mismatch fails initialization. To change a password while preserving data, use an authenticated administrator session and psql's `\password account_name`, then update `.env` to match. Application staff passwords are likewise never reset by seeds.
 
