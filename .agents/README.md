@@ -21,6 +21,10 @@ All Go implementation, formatting, static analysis, automated tests, and review 
 
 Go versions are upgraded only through a dedicated maintenance feature. The architect reviews language, standard-library, dependency, and compatibility impact; the developer updates this declared version and reruns the relevant checks; QA and security approve the change; and the orchestrator records the result. No agent silently upgrades or mixes Go toolchain versions within a feature.
 
+## Required Go skills
+
+Before any Go coding, review, debugging, troubleshooting, or setup task, load `.agents/skills/golang-how-to/SKILL.md` first. It must select and load the relevant secondary skills from `.agents/skills/golang-*` before work begins; do not load the full catalog unless the task requires it.
+
 ## Review response format
 
 Every approval or rejection must state:

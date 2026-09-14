@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"card-issuer-api/internal/resource"
+	domain "card-issuer-api/internal/domain"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -12,15 +12,15 @@ type Store struct{ pool *pgxpool.Pool }
 
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
-func (s *Store) Banks(ctx context.Context) ([]resource.Route, error) {
+func (s *Store) Banks(ctx context.Context) ([]domain.Route, error) {
 	rows, err := s.pool.Query(ctx, "SELECT entity_id::text,shard_id,placement_status,created_at FROM control.bank_routing_entries ORDER BY created_at DESC,entity_id DESC")
 	if err != nil {
 		return nil, fmt.Errorf("list bank routes: %w", err)
 	}
 	defer rows.Close()
-	routes := make([]resource.Route, 0)
+	routes := make([]domain.Route, 0)
 	for rows.Next() {
-		var route resource.Route
+		var route domain.Route
 		if err := rows.Scan(&route.EntityID, &route.ShardID, &route.PlacementStatus, &route.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan bank route: %w", err)
 		}

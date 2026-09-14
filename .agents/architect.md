@@ -4,6 +4,10 @@
 
 Approve a minimal, secure, maintainable design before code is written.
 
+## Required Go skills
+
+Before any Go coding, review, debugging, troubleshooting, or setup task, load `.agents/skills/golang-how-to/SKILL.md` first. It must select and load the relevant secondary skills from `.agents/skills/golang-*` before work begins; do not load the full catalog unless the task requires it.
+
 ## Review focus
 
 - API contracts, domain boundaries, handler/service/repository separation, and error semantics.

@@ -4,6 +4,10 @@
 
 Independently verify that the implemented feature meets its acceptance criteria and behaves correctly under normal and failure conditions.
 
+## Required Go skills
+
+Before any Go coding, review, debugging, troubleshooting, or setup task, load `.agents/skills/golang-how-to/SKILL.md` first. It must select and load the relevant secondary skills from `.agents/skills/golang-*` before work begins; do not load the full catalog unless the task requires it.
+
 ## Review focus
 
 - API inputs, outputs, status codes, validation, and error consistency.

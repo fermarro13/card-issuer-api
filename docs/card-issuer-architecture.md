@@ -4,7 +4,7 @@
 
 This document defines the target application architecture for Card Issuer API: its public HTTP API, its independently deployed batch-executor daemon, and the contracts between them and PostgreSQL.
 
-**Implementation status (2026-09-13):** the shard persistence contract described below is implemented in the initial schema and has database-harness coverage. The authentication endpoints are implemented in the API process. The public card/batch API and `cmd/executor` daemon remain application work.
+**Implementation status (2026-09-14):** the shard persistence contract described below is implemented in the initial schema and has database-harness coverage. The authentication endpoints, public card API, and public card-status batch API are implemented in the API process. The `cmd/executor` daemon remains application work.
 
 The target system remains one Go module with shared internal domain packages. It is designed to be deployed as two binaries:
 
@@ -209,6 +209,10 @@ Important configuration includes executor identity, control/shard URLs, polling 
 
 On `SIGTERM`, the executor stops claiming new work, lets bounded in-flight transactions finish, releases resources, and relies on lease recovery for interrupted work.
 
+## Application package responsibilities
+
+The API composes feature services explicitly: `internal/bank` owns bank directory and provisioning; `internal/staff` issuer staff administration; `internal/catalog` card products, clients, and account references; `internal/card` card reads and lifecycle workflows; and `internal/batch` card-status batch workflows. `internal/tenant` owns trusted routing decisions, while `internal/idempotency` owns request fingerprints. Each feature defines the repository and transaction capabilities it consumes; PostgreSQL adapters remain under `internal/repository`, and `internal/domain` contains only shared persistence-neutral data contracts.
+
 ## Persistence implementation status
 
 The shard initial migration now implements the public-batch persistence model beyond the original all-or-nothing `queued`/`processing`/`succeeded`/`failed` shape:
@@ -222,7 +226,7 @@ The shard initial migration now implements the public-batch persistence model be
 
 It also implements a separate system expiry-run header and per-card-item model rather than reusing the atomic public status-batch result. The schema enforces one run per bank/UTC date, system `expire` operations for its items, per-item attempts/outcomes/safe failure codes, fenced claims, exact terminal aggregate counts, and retry selection only while the card is not `expired`. An item becomes `manual_retry_required` after its initial attempt and three automatic retries fail.
 
-`docs/database-design.md` and `database/SCHEMA.md` reflect these settled initial-schema contracts. The issuer-operator authorization, command idempotency, and audit co-commit for the manual-retry endpoint are deliberately application responsibilities; their persistence primitives are available but the endpoint is not implemented yet.
+`docs/database-design.md` and `database/SCHEMA.md` reflect these settled initial-schema contracts. The API implements issuer-operator authorization, command idempotency, and audit co-commit for the manual-retry endpoint using those persistence primitives.
 
 ## Verification requirements
 

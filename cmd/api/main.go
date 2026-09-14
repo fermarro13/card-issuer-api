@@ -11,14 +11,19 @@ import (
 	"time"
 
 	"card-issuer-api/internal/auth"
+	"card-issuer-api/internal/bank"
+	"card-issuer-api/internal/batch"
+	"card-issuer-api/internal/card"
+	"card-issuer-api/internal/catalog"
 	"card-issuer-api/internal/config"
 	"card-issuer-api/internal/database"
 	authrepository "card-issuer-api/internal/repository/auth"
 	controlrepository "card-issuer-api/internal/repository/control"
 	routingrepository "card-issuer-api/internal/repository/routing"
 	shardrepository "card-issuer-api/internal/repository/shard"
-	"card-issuer-api/internal/resource"
 	"card-issuer-api/internal/server"
+	"card-issuer-api/internal/staff"
+	"card-issuer-api/internal/tenant"
 )
 
 func main() {
@@ -69,8 +74,21 @@ func run(logger *slog.Logger) int {
 	}
 	logger.Info("HTTP server started", "address", listener.Addr().String())
 	authentication := auth.NewService(authrepository.New(authPool), signer)
-	business := resource.New(authentication, authPool, controlrepository.New(authPool), routingrepository.New(control), shardrepository.NewReader(shard), shard, cfg.ShardID, cfg.CursorKey)
-	if err := server.Serve(ctx, listener, server.Handler(authPool.Ping, control.Ping, shard.Ping, authentication, business), logger); err != nil {
+	banks := bank.New(controlrepository.NewBank(authPool), routingrepository.New(control), shardrepository.NewBank(shard), cfg.ShardID)
+	catalogService := catalog.New(shardrepository.NewCatalog(shard))
+	cardService := card.New(shardrepository.NewCard(shard))
+	batchService := batch.New(shardrepository.NewBatch(shard))
+	staffService := staff.New(controlrepository.NewStaff(authPool), routingrepository.New(control), cfg.ShardID)
+	bankAccess := tenant.New(routingrepository.New(control), cfg.ShardID)
+	resourceHandler := server.NewResourceHandler(authentication, server.Dependencies{
+		Bank:    banks,
+		Access:  bankAccess,
+		Catalog: catalogService,
+		Card:    cardService,
+		Batch:   batchService,
+		Staff:   staffService,
+	}, cfg.CursorKey)
+	if err := server.Serve(ctx, listener, server.Handler(authPool.Ping, control.Ping, shard.Ping, authentication, resourceHandler), logger); err != nil {
 		logger.Error("HTTP server stopped unexpectedly")
 		return 1
 	}

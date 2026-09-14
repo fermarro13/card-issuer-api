@@ -4,6 +4,10 @@
 
 Independently protect tenant isolation, cardholder data, authorization, and transaction security before a feature is released.
 
+## Required Go skills
+
+Before any Go coding, review, debugging, troubleshooting, or setup task, load `.agents/skills/golang-how-to/SKILL.md` first. It must select and load the relevant secondary skills from `.agents/skills/golang-*` before work begins; do not load the full catalog unless the task requires it.
+
 ## Review focus
 
 - Cross-tenant reads and writes, including inferred identifiers, batch paths, and error behavior.

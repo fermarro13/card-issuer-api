@@ -2,6 +2,7 @@
 
 | Date | Plan | Status |
 | --- | --- | --- |
+| 2026-09-14 | [Card-status Batch API](2026-09-14-card-status-batch-api.md) | Implementation delivered; QA/security review pending |
 | 2026-09-10 | [Agentic Development Harness](2026-09-10-agentic-development-harness.md) | Implemented |
 | 2026-09-10 | [Go Version Governance in the Agent Harness](2026-09-10-go-version-governance.md) | Implemented |
 | 2026-09-10 | [Save the Database Design Document](2026-09-10-database-design-document.md) | Delivered (documentation only) |

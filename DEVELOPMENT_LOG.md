@@ -1,5 +1,17 @@
 # Development Log
 
+## 2026-09-14 — CARD-STATUS-BATCH-API-001: Card-status batch API
+
+- User · Scope: Implement the remaining public API endpoints described in the card-issuer architecture.
+- Orchestrator · Scope decision: The unimplemented public surface is the card-status batch API; existing card/expiry-retry routes are retained and executor work remains separate.
+- Orchestrator · Plan: [Card-status Batch API](docs/plans/2026-09-14-card-status-batch-api.md).
+- Architect · Gate: APPROVED. Required boundaries: trusted authenticated bank routing, tenant-scoped parameterized repository operations, canonical actor-bound idempotency, atomic draft evidence, immutable membership, and no schema changes.
+- User · Exception: Do not persist future approved implementation plans; this explicit instruction waives plan-file persistence to reduce token use. Existing plans remain immutable; revisit if the user withdraws this exception.
+- Implementation · Verified: authenticated bank-scoped create, list, read, item-list, execute, cancel, and linked-retry batch endpoints are present; draft construction, idempotency, audit evidence, and parameterized tenant-scoped repository operations are implemented without schema changes.
+- Automated tests · PASSED: Go 1.27.1; `go test -count=1 ./...` and `go vet ./...` pass. Handler coverage includes create, execute, cancel, retry, and read-only-role rejection.
+- QA and Security · Status: Independent review remains required before feature closeout; the database-backed batch acceptance matrix has not been run in this verification session.
+- Orchestrator · Status: Implementing.
+
 ## 2026-09-13 — PUBLIC-RESOURCE-API-001: Public resource and card command API
 
 - User · Scope: Implement the public resource API, card lifecycle commands, and manual expiry-item retry described in the approved plan.

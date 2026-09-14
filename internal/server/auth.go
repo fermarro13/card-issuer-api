@@ -67,7 +67,7 @@ func (h authenticationHandler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input loginRequest
-	if !decodeRequest(w, r, &input) || input.Username == "" || input.Password == "" {
+	if !DecodeRequest(w, r, &input) || input.Username == "" || input.Password == "" {
 		writeProblem(w, r, http.StatusBadRequest, "invalid_request", "username and password are required.")
 		return
 	}
@@ -143,7 +143,7 @@ func (h authenticationHandler) password(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var input passwordRequest
-	if !decodeRequest(w, r, &input) || input.CurrentPassword == "" || input.NewPassword == "" {
+	if !DecodeRequest(w, r, &input) || input.CurrentPassword == "" || input.NewPassword == "" {
 		writeProblem(w, r, http.StatusBadRequest, "invalid_request", "current_password and new_password are required.")
 		return
 	}
@@ -187,7 +187,8 @@ func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
 	return false
 }
 
-func decodeRequest(w http.ResponseWriter, r *http.Request, target any) bool {
+// DecodeRequest enforces the API's JSON body rules for HTTP handlers.
+func DecodeRequest(w http.ResponseWriter, r *http.Request, target any) bool {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		return false
@@ -199,6 +200,22 @@ func decodeRequest(w http.ResponseWriter, r *http.Request, target any) bool {
 		return false
 	}
 	return errors.Is(decoder.Decode(&struct{}{}), io.EOF)
+}
+
+// RequireMethods produces the API's method-not-allowed problem response.
+func RequireMethods(w http.ResponseWriter, r *http.Request, methods ...string) {
+	w.Header().Set("Allow", strings.Join(methods, ", "))
+	writeProblem(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "The request method is not allowed for this endpoint.")
+}
+
+// IdempotencyKey validates and retrieves the request idempotency key.
+func IdempotencyKey(w http.ResponseWriter, r *http.Request) (string, bool) {
+	key := r.Header.Get("Idempotency-Key")
+	if len(key) < 1 || len(key) > 256 {
+		writeProblem(w, r, http.StatusBadRequest, "invalid_idempotency_key", "Idempotency-Key must contain 1 to 256 characters.")
+		return "", false
+	}
+	return key, true
 }
 
 func setRefreshCookie(w http.ResponseWriter, token string, expiresAt time.Time) {

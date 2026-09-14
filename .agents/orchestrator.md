@@ -4,6 +4,10 @@
 
 Coordinate each feature from intake through closure while enforcing the project gates. The orchestrator owns process, not technical approval.
 
+## Required Go skills
+
+Before any Go coding, review, debugging, troubleshooting, or setup task, load `.agents/skills/golang-how-to/SKILL.md` first. It must select and load the relevant secondary skills from `.agents/skills/golang-*` before work begins; do not load the full catalog unless the task requires it.
+
 ## Required inputs
 
 - User request and acceptance criteria.

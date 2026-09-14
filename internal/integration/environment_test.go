@@ -18,13 +18,18 @@ import (
 	"time"
 
 	"card-issuer-api/internal/auth"
+	"card-issuer-api/internal/bank"
+	"card-issuer-api/internal/batch"
+	"card-issuer-api/internal/card"
+	"card-issuer-api/internal/catalog"
 	"card-issuer-api/internal/database"
 	authrepository "card-issuer-api/internal/repository/auth"
 	controlrepository "card-issuer-api/internal/repository/control"
 	routingrepository "card-issuer-api/internal/repository/routing"
 	shardrepository "card-issuer-api/internal/repository/shard"
-	"card-issuer-api/internal/resource"
 	"card-issuer-api/internal/server"
+	"card-issuer-api/internal/staff"
+	"card-issuer-api/internal/tenant"
 )
 
 func TestRuntimeDatabaseEnvironment(t *testing.T) {
@@ -302,8 +307,15 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		business := resource.New(service, authPool, controlrepository.New(authPool), routingrepository.New(control), shardrepository.NewReader(shard), shard, "shard_01", make([]byte, 32))
-		handler := server.Handler(authPool.Ping, control.Ping, shard.Ping, service, business)
+		routes := routingrepository.New(control)
+		handler := server.Handler(authPool.Ping, control.Ping, shard.Ping, service, server.NewResourceHandler(service, server.Dependencies{
+			Bank:    bank.New(controlrepository.NewBank(authPool), routes, shardrepository.NewBank(shard), "shard_01"),
+			Access:  tenant.New(routes, "shard_01"),
+			Catalog: catalog.New(shardrepository.NewCatalog(shard)),
+			Card:    card.New(shardrepository.NewCard(shard)),
+			Batch:   batch.New(shardrepository.NewBatch(shard)),
+			Staff:   staff.New(controlrepository.NewStaff(authPool), routes, "shard_01"),
+		}, []byte("integration-cursor-key")))
 		request := func(method, path, body, key string) *httptest.ResponseRecorder {
 			r := httptest.NewRequest(method, path, strings.NewReader(body))
 			r.Header.Set("Authorization", "Bearer "+login.AccessToken)

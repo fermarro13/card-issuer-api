@@ -30,6 +30,27 @@ type Claims struct {
 	EntityID  string
 }
 
+// Principal is the application-facing identity of an authenticated caller.
+// It deliberately excludes JWT and session details, which belong to the
+// authentication transport rather than business workflows.
+type Principal struct {
+	UserID   string
+	Username string
+	Role     string
+	EntityID string
+}
+
+// Principal returns the identity fields that application services need after
+// the access token has been verified.
+func (c Claims) Principal() Principal {
+	return Principal{
+		UserID:   c.UserID,
+		Username: c.Username,
+		Role:     c.Role,
+		EntityID: c.EntityID,
+	}
+}
+
 type TokenResponse struct {
 	AccessToken string      `json:"access_token"`
 	TokenType   string      `json:"token_type"`

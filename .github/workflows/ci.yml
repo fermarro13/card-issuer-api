@@ -20,3 +20,8 @@ jobs:
       - run: go test ./...
       - run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
       - run: gosec -tests -include=G201,G202 ./cmd/... ./internal/...
+      - name: Enforce pgx repository boundary
+        shell: bash
+        run: |
+          offenders="$(rg -l 'github.com/jackc/pgx' cmd internal --glob '*.go' | rg -v '^internal/(database|repository)/' || true)"
+          test -z "$offenders" || { echo "$offenders"; exit 1; }

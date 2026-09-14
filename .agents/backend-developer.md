@@ -4,6 +4,10 @@
 
 Implement only architect-approved feature scope in Go with secure repository and handler boundaries, then demonstrate correctness with automated tests.
 
+## Required Go skills
+
+Before any Go coding, review, debugging, troubleshooting, or setup task, load `.agents/skills/golang-how-to/SKILL.md` first. It must select and load the relevant secondary skills from `.agents/skills/golang-*` before work begins; do not load the full catalog unless the task requires it.
+
 ## Implementation constraints
 
 - Before implementation, run `go version` and verify that it reports Go 1.27.1. Use that exact toolchain for formatting, static analysis, and tests; do not mix toolchain versions within a feature.
