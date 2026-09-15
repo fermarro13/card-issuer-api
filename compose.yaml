@@ -80,5 +80,22 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
 
+  functional-tests:
+    build:
+      context: ./functional-tests
+    profiles: ["functional"]
+    environment:
+      FUNCTIONAL_BASE_URL: http://app:8080
+      FUNCTIONAL_PGHOST: postgres
+      FUNCTIONAL_PGPORT: "5432"
+      FUNCTIONAL_PGUSER: postgres
+      FUNCTIONAL_PGPASSWORD: ${POSTGRES_PASSWORD:-Dev-Postgres-Admin!2026}
+      FUNCTIONAL_CONTROL_DATABASE: ${CONTROL_DATABASE:-card_issuer_control}
+      FUNCTIONAL_SHARD_DATABASE: ${SHARD_DATABASE:-card_issuer_shard_01}
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   postgres_data:

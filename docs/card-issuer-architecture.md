@@ -84,9 +84,9 @@ The access token is a 15-minute EdDSA bearer JWT signed by an application-owned 
 
 | Role | Scope | API permissions |
 | --- | --- | --- |
-| `issuer_operator` | Any bank | Full supported reference-data management, card issue/replacement/lifecycle, batches, and staff administration. |
+| `issuer_operator` | Any bank | Full supported reference-data management, card issue/replacement/lifecycle, batches, bank-directory, and staff administration. |
 | `issuer_readonly` | Any bank | All documented business reads. |
-| `bank_operator` | Assigned bank only | Business reads and supported card-status changes, including batches. |
+| `bank_operator` | Assigned bank only | Business reads; creation of products, clients, account references, cards, and replacements; and supported card-status changes, including batches. |
 | `bank_readonly` | Assigned bank only | Business reads, history, and permitted audits. |
 
 Every bank business path contains `{bankId}`. The API verifies the token before choosing a shard. A bank-role user may only use its assigned bank ID; an issuer-role user may select any active routed bank. Routing data, request bodies, cursors, and work records never override that trusted decision.
@@ -99,10 +99,10 @@ Only `issuer_operator` may manage or read bank-directory resources and staff. Ba
 | --- | --- | --- |
 | Banks | `GET`, `POST /v1/banks`; `GET`, `PATCH /v1/banks/{bankId}` | `issuer_operator` only. A bank resource maps to the shard-local Entity and its central routing entry. No delete endpoint exists. |
 | Staff users | `GET`, `POST /v1/users`; `GET`, `PATCH /v1/users/{userId}`; `POST /v1/users/{userId}:disable`; `POST /v1/users/{userId}:set-password` | Issuer operators only. Role/bank assignment changes are audited and increment authorization version as required. |
-| Products | `GET`, `POST /v1/banks/{bankId}/card-products`; `GET`, `PATCH /v1/banks/{bankId}/card-products/{productId}` | Product configuration is an opaque validated JSON object; updates advance configuration version. |
-| Clients | `GET`, `POST /v1/banks/{bankId}/clients`; `GET`, `PATCH /v1/banks/{bankId}/clients/{clientId}` | Input is an opaque `external_client_ref` and optional `display_name`. |
-| Account references | `GET`, `POST /v1/banks/{bankId}/account-references`; `GET`, `PATCH /v1/banks/{bankId}/account-references/{accountId}` | Input binds a client to an opaque `external_account_ref`. |
-| Cards | `GET`, `POST /v1/banks/{bankId}/cards`; `GET /v1/banks/{bankId}/cards/{cardId}` | Listing supports client, account, product, and status filters. Generic card updates are not supported. |
+| Products | `GET`, `POST /v1/banks/{bankId}/card-products`; `GET`, `PATCH /v1/banks/{bankId}/card-products/{productId}` | Issuer and assigned bank operators may create; PATCH remains issuer-only. Product configuration is an opaque validated JSON object; updates advance configuration version. |
+| Clients | `GET`, `POST /v1/banks/{bankId}/clients`; `GET`, `PATCH /v1/banks/{bankId}/clients/{clientId}` | Issuer and assigned bank operators may create; PATCH remains issuer-only. Input is an opaque `external_client_ref` and optional `display_name`. |
+| Account references | `GET`, `POST /v1/banks/{bankId}/account-references`; `GET`, `PATCH /v1/banks/{bankId}/account-references/{accountId}` | Issuer and assigned bank operators may create; PATCH remains issuer-only. Input binds a client to an opaque `external_account_ref`. |
+| Cards | `GET`, `POST /v1/banks/{bankId}/cards`; `GET /v1/banks/{bankId}/cards/{cardId}` | Issuer and assigned bank operators may issue. Listing supports client, account, product, and status filters. Generic card updates are not supported. |
 | Card history and operations | `GET /v1/banks/{bankId}/cards/{cardId}/history`; `GET /v1/banks/{bankId}/cards/{cardId}/operations` | Append-only business evidence; no mutation routes. |
 
 Creation and update responses return the current resource representation. Reference data is preserved rather than deleted; inactive status replaces destructive removal where applicable.
@@ -111,12 +111,12 @@ Creation and update responses return the current resource representation. Refere
 
 | Method and path | Behavior | Success |
 | --- | --- | --- |
-| `POST /v1/banks/{bankId}/cards` | Creates an `issued` card and succeeded `issue` operation from `client_id`, `account_reference_id`, `product_id`, and `reason`, with an opaque local credential reference. Issuer operator only. | `201` with card and operation summaries. |
+| `POST /v1/banks/{bankId}/cards` | Creates an `issued` card and succeeded `issue` operation from `client_id`, `account_reference_id`, `product_id`, and `reason`, with an opaque local credential reference. Issuer or assigned bank operator. | `201` with card and operation summaries. |
 | `POST /v1/banks/{bankId}/cards/{cardId}:activate` | `issued` to `active`; when the card is a replacement, closes its predecessor in the same transaction. | `200` with card and operation. |
 | `POST /v1/banks/{bankId}/cards/{cardId}:suspend` | `active` to `suspended`. | `200` with card and operation. |
 | `POST /v1/banks/{bankId}/cards/{cardId}:resume` | `suspended` to `active`. | `200` with card and operation. |
 | `POST /v1/banks/{bankId}/cards/{cardId}:close` | Moves an eligible nonterminal card to `closed`. | `200` with card and operation. |
-| `POST /v1/banks/{bankId}/cards/{cardId}:replace` | Creates a linked `issued` successor and succeeded `replace` operation, with an opaque local credential reference. Issuer operator only. | `201` with successor card and operation summaries. |
+| `POST /v1/banks/{bankId}/cards/{cardId}:replace` | Creates a linked `issued` successor and succeeded `replace` operation, with an opaque local credential reference. Issuer or assigned bank operator. | `201` with successor card and operation summaries. |
 
 Each command body has a required nonempty `reason`. A request that targets the card's present status is a successful ignored operation: it writes operation/audit evidence but does not alter the card, increment its version, or append status history. Other invalid transitions return `422 invalid_card_transition`.
 

@@ -9,7 +9,7 @@ import (
 )
 
 func (h resourceHandler) referenceCreate(w http.ResponseWriter, r *http.Request, claims auth.Claims, bank, kind string) {
-	if claims.Role != "issuer_operator" {
+	if claims.Role != "issuer_operator" && claims.Role != "bank_operator" {
 		writeProblem(w, r, http.StatusForbidden, "forbidden", "The authenticated user is not permitted to perform this operation.")
 		return
 	}

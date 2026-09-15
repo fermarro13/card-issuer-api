@@ -159,6 +159,23 @@ func (s *Service) PatchAccountReferenceWorkflow(ctx context.Context, principal a
 type createFunc func(Transaction) (json.RawMessage, string, error)
 type patchFunc func(Transaction) (json.RawMessage, bool, error)
 
+func referenceAudit(principal auth.Principal, bank, action, kind, resourceID, requestID string) domain.ReferenceAudit {
+	actorEntityID := ""
+	if principal.Role == "bank_operator" {
+		actorEntityID = principal.EntityID
+	}
+	return domain.ReferenceAudit{
+		Bank:          bank,
+		ActorID:       principal.UserID,
+		ActorRole:     principal.Role,
+		ActorEntityID: actorEntityID,
+		Action:        action,
+		Kind:          kind,
+		ResourceID:    resourceID,
+		RequestID:     requestID,
+	}
+}
+
 func (s *Service) mutate(ctx context.Context, principal auth.Principal, bank, kind, key string, input any, requestID string, create createFunc) (json.RawMessage, error) {
 	body, err := json.Marshal(input)
 	if err != nil {
@@ -181,7 +198,7 @@ func (s *Service) mutate(ctx context.Context, principal auth.Principal, bank, ki
 	if err != nil {
 		return nil, err
 	}
-	if err = tx.RecordReferenceAudit(ctx, domain.ReferenceAudit{Bank: bank, ActorID: principal.UserID, Action: kind + ".create", Kind: kind, ResourceID: id, RequestID: requestID}); err != nil {
+	if err = tx.RecordReferenceAudit(ctx, referenceAudit(principal, bank, kind+".create", kind, id, requestID)); err != nil {
 		return nil, err
 	}
 	if err = tx.FinishIdempotency(ctx, bank, scope, key, statusCreated, raw, id, principal.UserID); err != nil {
@@ -218,7 +235,7 @@ func (s *Service) patch(ctx context.Context, principal auth.Principal, bank, kin
 	if !updated {
 		return nil, problem(statusNotFound, "not_found", "The requested resource does not exist.")
 	}
-	if err = tx.RecordReferenceAudit(ctx, domain.ReferenceAudit{Bank: bank, ActorID: principal.UserID, Action: kind + ".patch", Kind: kind, ResourceID: id, RequestID: requestID}); err != nil {
+	if err = tx.RecordReferenceAudit(ctx, referenceAudit(principal, bank, kind+".patch", kind, id, requestID)); err != nil {
 		return nil, err
 	}
 	if err = tx.FinishIdempotency(ctx, bank, scope, key, statusOK, raw, id, principal.UserID); err != nil {

@@ -112,3 +112,15 @@ Pass `--app-port 18080` to the shell script or `-AppPort 18080` to the PowerShel
 On Windows, `HCS_E_HYPERV_NOT_INSTALLED` means Docker Desktop's WSL2 engine cannot start until Windows Virtual Machine Platform and firmware virtualization are available. On Linux, ensure the Docker daemon is running and the current user can access it. Container tests cannot run until Docker can start Linux containers; ordinary Go/PostgreSQL test evidence does not substitute for a successful image build.
 
 See [database schema](database/SCHEMA.md), [database tooling](database/README.md), and [the design](docs/database-design.md) for data-model and application responsibilities.
+
+## Functional API tests
+
+The optional pytest container exercises the running Compose API and verifies persisted rows through the internal POC PostgreSQL service. It is intentionally limited to a disposable development stack because it uses the Compose PostgreSQL administrator account and leaves test data behind.
+
+After starting a freshly initialized stack, run:
+
+```powershell
+docker compose --profile functional run --rm functional-tests
+```
+
+The `functional` profile is not started by ordinary `docker compose up`.

@@ -501,7 +501,7 @@ func (t transaction) UpdateAccountReference(ctx context.Context, bank, id string
 }
 
 func (t transaction) RecordReferenceAudit(ctx context.Context, audit domain.ReferenceAudit) error {
-	_, err := t.tx.Exec(ctx, "INSERT INTO bank.audit_events(entity_id,actor_user_id,actor_role,action,resource_type,resource_id,outcome,request_id) VALUES ($1,$2,'issuer_operator',$3,$4,$5,'succeeded',$6)", audit.Bank, audit.ActorID, audit.Action, audit.Kind, audit.ResourceID, audit.RequestID)
+	_, err := t.tx.Exec(ctx, "INSERT INTO bank.audit_events(entity_id,actor_user_id,actor_role,actor_entity_id,action,resource_type,resource_id,outcome,request_id) VALUES ($1,$2,$3,$4,$5,$6,$7,'succeeded',$8)", audit.Bank, audit.ActorID, audit.ActorRole, nullable(audit.ActorEntityID), audit.Action, audit.Kind, audit.ResourceID, audit.RequestID)
 	return err
 }
 

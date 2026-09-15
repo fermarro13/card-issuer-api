@@ -195,12 +195,14 @@ type AccountReferencePatch struct {
 	ActorID  string
 }
 type ReferenceAudit struct {
-	Bank       string
-	ActorID    string
-	Action     string
-	Kind       string
-	ResourceID string
-	RequestID  string
+	Bank          string
+	ActorID       string
+	ActorRole     string
+	ActorEntityID string
+	Action        string
+	Kind          string
+	ResourceID    string
+	RequestID     string
 }
 type CardIssue struct {
 	CardID              string

@@ -75,7 +75,7 @@ func (h resourceHandler) cardWrites(w http.ResponseWriter, r *http.Request, clai
 		return
 	}
 	if len(tail) == 0 {
-		if claims.Role != "issuer_operator" {
+		if claims.Role != "issuer_operator" && claims.Role != "bank_operator" {
 			writeProblem(w, r, http.StatusForbidden, "forbidden", "The authenticated user is not permitted to perform this operation.")
 			return
 		}
@@ -113,7 +113,7 @@ func (h resourceHandler) cardWrites(w http.ResponseWriter, r *http.Request, clai
 	}
 	action := bits[1]
 	if action == "replace" {
-		if claims.Role != "issuer_operator" {
+		if claims.Role != "issuer_operator" && claims.Role != "bank_operator" {
 			writeProblem(w, r, http.StatusForbidden, "forbidden", "The authenticated user is not permitted to perform this operation.")
 			return
 		}

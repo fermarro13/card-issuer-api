@@ -310,11 +310,11 @@ Each staff user has exactly one constrained role. Role scope determines which ba
 | Role | Bank scope | Permissions |
 | --- | --- | --- |
 | `issuer_operator` | All banks | Full supported bank/product/client/account-reference administration, card issuance/replacement/lifecycle operations, batches, and user administration. |
-| `bank_operator` | One assigned bank | Read business data and request all supported card-status changes, including permanent closure, individually or in batches. |
+| `bank_operator` | One assigned bank | Read business data; create products, clients, account references, cards, and replacements; and request all supported card-status changes, including permanent closure, individually or in batches. |
 | `bank_readonly` | One assigned bank | Read business data and permitted business audit/history records. |
 | `issuer_readonly` | All banks | The same business read permissions across banks. |
 
-Bank operators cannot issue/replace cards, delete records, administer users, or modify banks, products, clients, and account references. Issuer operators remain subject to lifecycle validation, atomicity, credential handling, and retention constraints; full administration does not authorize editing audit history. Application roles never grant PostgreSQL superuser or RLS-bypass privileges.
+Bank operators cannot delete records, administer users, modify banks, or patch products, clients, and account references. Issuer operators remain subject to lifecycle validation, atomicity, credential handling, and retention constraints; full administration does not authorize editing audit history. Application roles never grant PostgreSQL superuser or RLS-bypass privileges.
 
 Business read permissions exclude password hashes, token records, credentials, and unrestricted authentication logs. Issuer operators administer users and may review sanitized authentication/user-administration evidence through explicitly authorized operations; they do not retrieve credential material. All roles can perform their own login, refresh, logout, and password-change actions without gaining business write permissions.
 
