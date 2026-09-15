@@ -206,7 +206,7 @@ func TestDatabaseIntegration(t *testing.T) {
 		h.equal(h.control, "SELECT count(*) FROM control.users;", "4")
 		h.equal(h.control, "SELECT count(*) FROM control.users WHERE status='enabled' AND normalized_username=role AND ((role LIKE 'bank_%')=(entity_id IS NOT NULL));", "4")
 		h.equal(h.control, "SELECT count(*) FROM control.auth_sessions;", "0")
-		h.equal(h.shard, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON c.relnamespace=n.oid WHERE n.nspname='bank' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity;", "14")
+		h.equal(h.shard, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON c.relnamespace=n.oid WHERE n.nspname='bank' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity;", "15")
 		h.equal(h.control, "SELECT count(*) FROM pg_tables WHERE schemaname='control';", "6")
 		h.equal(h.control, "SELECT count(*) FROM pg_roles WHERE rolname IN ('ci_owner','ci_auth_runtime','ci_routing_reader','ci_business_runtime','ci_executor_runtime') AND NOT (rolcanlogin OR rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb);", "5")
 	})
@@ -249,7 +249,7 @@ func TestDatabaseIntegration(t *testing.T) {
 		}
 		wg.Wait()
 		h.equal(h.control, "SELECT count(*) FROM ci_meta.schema_migrations;", "3")
-		h.equal(h.shard, "SELECT count(*) FROM ci_meta.schema_migrations;", "4")
+		h.equal(h.shard, "SELECT count(*) FROM ci_meta.schema_migrations;", "5")
 	})
 	t.Run("migration_checksums_and_rollback", func(t *testing.T) {
 		h := h
@@ -259,7 +259,11 @@ func TestDatabaseIntegration(t *testing.T) {
 			if err := os.Mkdir(filepath.Join(root, kind), 0700); err != nil {
 				t.Fatal(err)
 			}
-			for _, name := range []string{"001_initial.sql", "002_public_resource_api.sql", "004_executor_runtime.sql"} {
+			names := []string{"001_initial.sql", "002_public_resource_api.sql", "004_executor_runtime.sql"}
+			if kind == "shard" {
+				names = append(names, "005_executor_runtime_hardening.sql")
+			}
+			for _, name := range names {
 				data := read(t, "../migrations/"+kind+"/"+name)
 				if err := os.WriteFile(filepath.Join(root, kind, name), []byte(data), 0600); err != nil {
 					t.Fatal(err)
@@ -336,6 +340,15 @@ func TestDatabaseIntegration(t *testing.T) {
 		h.reject(h.control, "SET ROLE ci_routing_reader; SELECT password_hash FROM control.users;", "42501")
 		h.reject(h.control, "SET ROLE ci_business_runtime; SELECT * FROM control.users;", "42501")
 		h.reject(h.control, "SET ROLE ci_auth_runtime; UPDATE control.authentication_audit_events SET event_type='rewritten';", "42501")
+		executorTenant := "BEGIN; SET LOCAL ROLE ci_executor_runtime; SET LOCAL app.entity_id='10000000-0000-4000-8000-000000000001'; "
+		for _, tc := range []struct{ name, sql, state string }{
+			{"ungranted table", "SELECT * FROM bank.clients;", "42501"},
+			{"ungranted card column", "UPDATE bank.cards SET client_id='30000000-0000-4000-8000-000000000001' WHERE id='60000000-0000-4000-8000-000000000001';", "42501"},
+			{"cross tenant insert", "INSERT INTO bank.card_expiry_runs(entity_id,run_date,executor_identity) VALUES ('10000000-0000-4000-8000-000000000002',CURRENT_DATE,'executor-test');", "42501"},
+		} {
+			t.Run("executor_"+tc.name, func(t *testing.T) { h := h; h.t = t; h.reject(h.shard, executorTenant+tc.sql, tc.state) })
+		}
+		h.reject(h.control, "SET ROLE ci_executor_runtime; SELECT password_hash FROM control.users;", "42501")
 	})
 	t.Run("atomic_database_rollback", func(t *testing.T) {
 		h := h

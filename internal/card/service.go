@@ -4,7 +4,6 @@ package card
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +13,7 @@ import (
 	"card-issuer-api/internal/auth"
 	domain "card-issuer-api/internal/domain"
 	"card-issuer-api/internal/idempotency"
+	"card-issuer-api/internal/vault"
 )
 
 const (
@@ -28,10 +28,13 @@ const (
 
 type Service struct {
 	reader Store
+	vault  vault.CredentialVault
 	now    func() time.Time
 }
 
-func New(reader Store) *Service { return &Service{reader: reader, now: time.Now} }
+func New(reader Store, credentialVault vault.CredentialVault) *Service {
+	return &Service{reader: reader, vault: credentialVault, now: time.Now}
+}
 
 func (s *Service) ListCards(ctx context.Context, bank, clientID, accountID, productID, status string) ([]json.RawMessage, error) {
 	cards, err := s.reader.Cards(ctx, bank, domain.CardFilter{ClientID: clientID, AccountID: accountID, ProductID: productID, Status: status})
@@ -85,15 +88,24 @@ func (s *Service) IssueCardWorkflow(ctx context.Context, principal auth.Principa
 	if err != nil {
 		return nil, err
 	}
-	credentialReference, err := credential()
-	if err != nil {
-		return nil, err
-	}
 	operationID, err := newUUID()
 	if err != nil {
 		return nil, err
 	}
-	card, operation, err := tx.IssueCard(ctx, bank, domain.CardIssue{CardID: cardID, OperationID: operationID, ClientID: clientID, AccountReferenceID: accountID, ProductID: productID, CredentialReference: credentialReference, Reason: reason, ActorID: principal.UserID, ActorRole: principal.Role, ActorEntityID: actorEntityID(principal), RequestID: requestID})
+	if s.vault == nil {
+		return nil, errors.New("card: credential vault is not configured")
+	}
+	credentials, err := s.vault.Provision(ctx, vault.ProvisionRequest{CardID: cardID})
+	if err != nil {
+		return nil, fmt.Errorf("provision card credentials: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = s.vault.Revoke(context.WithoutCancel(ctx), cardID)
+		}
+	}()
+	card, operation, err := tx.IssueCard(ctx, bank, domain.CardIssue{CardID: cardID, OperationID: operationID, ClientID: clientID, AccountReferenceID: accountID, ProductID: productID, MaskedPAN: credentials.MaskedPAN, Reason: reason, ActorID: principal.UserID, ActorRole: principal.Role, ActorEntityID: actorEntityID(principal), RequestID: requestID})
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +119,8 @@ func (s *Service) IssueCardWorkflow(ctx context.Context, principal auth.Principa
 	if err = tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return raw, nil
+	committed = true
+	return issuanceResponse(card, operation, credentials), nil
 }
 
 func (s *Service) CardCommandWorkflow(ctx context.Context, principal auth.Principal, bank, id, action, key string, body []byte, reason, requestID string) (json.RawMessage, int, error) {
@@ -181,15 +194,24 @@ func (s *Service) replace(ctx context.Context, tx Transaction, principal auth.Pr
 	if err != nil {
 		return nil, 0, err
 	}
-	credentialReference, err := credential()
-	if err != nil {
-		return nil, 0, err
-	}
 	operationID, err := newUUID()
 	if err != nil {
 		return nil, 0, err
 	}
-	card, operation, err := tx.ReplaceCard(ctx, bank, domain.CardReplacement{SuccessorID: successor, OperationID: operationID, PredecessorID: id, ClientID: state.ClientID, AccountReferenceID: state.AccountReferenceID, ProductID: state.ProductID, CredentialReference: credentialReference, Reason: reason, ActorID: principal.UserID, ActorRole: principal.Role, ActorEntityID: actorEntityID(principal), RequestID: requestID})
+	if s.vault == nil {
+		return nil, 0, errors.New("card: credential vault is not configured")
+	}
+	credentials, err := s.vault.Provision(ctx, vault.ProvisionRequest{CardID: successor})
+	if err != nil {
+		return nil, 0, fmt.Errorf("provision replacement credentials: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = s.vault.Revoke(context.WithoutCancel(ctx), successor)
+		}
+	}()
+	card, operation, err := tx.ReplaceCard(ctx, bank, domain.CardReplacement{SuccessorID: successor, OperationID: operationID, PredecessorID: id, ClientID: state.ClientID, AccountReferenceID: state.AccountReferenceID, ProductID: state.ProductID, MaskedPAN: credentials.MaskedPAN, Reason: reason, ActorID: principal.UserID, ActorRole: principal.Role, ActorEntityID: actorEntityID(principal), RequestID: requestID})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -203,7 +225,8 @@ func (s *Service) replace(ctx context.Context, tx Transaction, principal auth.Pr
 	if err = tx.Commit(ctx); err != nil {
 		return nil, 0, err
 	}
-	return raw, statusCreated, nil
+	committed = true
+	return issuanceResponse(card, operation, credentials), statusCreated, nil
 }
 
 func (s *Service) RetryExpiryWorkflow(ctx context.Context, principal auth.Principal, bank, runID, itemID, key string, body []byte, _ string, requestID string) error {
@@ -265,12 +288,16 @@ func newUUID() (string, error) {
 	v := hex.EncodeToString(b)
 	return v[0:8] + "-" + v[8:12] + "-" + v[12:16] + "-" + v[16:20] + "-" + v[20:], nil
 }
-func credential() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return "local_" + base64.RawURLEncoding.EncodeToString(b), nil
+func issuanceResponse(card domain.Card, operation domain.CardOperation, credentials vault.ProvisionedCredential) json.RawMessage {
+	raw, _ := json.Marshal(map[string]any{
+		"card":      card,
+		"operation": operation,
+		"credentials": map[string]string{
+			"pan": credentials.PAN,
+			"cvv": credentials.CVV,
+		},
+	})
+	return raw
 }
 func marshalItems[T any](items []T, err error) ([]json.RawMessage, error) {
 	if err != nil {

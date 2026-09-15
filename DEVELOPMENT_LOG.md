@@ -1,5 +1,14 @@
 # Development Log
 
+## 2026-09-15 — ISSUER-AUTHORIZATION-VAULT-001: Issuer authorization vault and credential verifier
+
+- User · Scope: Add a PCI-scoped credential-verification boundary for banks to check an issuer card's credentials and lifecycle eligibility.
+- User · Decisions: Use a separate vault/HSM boundary, a test-only non-production adapter, mTLS bank authentication, masked account-number display only, and credential-plus-lifecycle decisions without financial authorization.
+- Orchestrator · Plan: [Issuer Authorization Vault and Credential Verifier](docs/plans/2026-09-15-issuer-authorization-vault-and-credential-verifier.md).
+- Implementation · Delivered: PCI credential-vault port; development/test-only keyed in-memory adapter; masked-display-only card persistence; one-time issuance/replacement disclosures with sanitized replays; tenant-scoped authorization decisions; and a separate TLS 1.3 client-certificate authorization binary.
+- Automated tests · PASSED: `go version` reports `go1.27.1 windows/amd64`; focused vault, mTLS-handler, configuration, and integration tests plus `go test ./...` pass.
+- Orchestrator · Status: Implementation delivered. Production external-vault/HSM and certificate/CA provisioning remain external prerequisites; QA and security review are pending.
+
 ## 2026-09-14 — BATCH-EXECUTOR-001: Batch executor
 
 - User · Scope: Implement the remaining independently deployable executor daemon from the card-issuer architecture, including batch dispatch, lease recovery, daily expiry, and separate container deployment.
@@ -9,10 +18,12 @@
 - Architect · Gate: APPROVED. Required boundaries: append-only least-privilege executor migrations; consumer-owned ports with no HTTP/internal-resource dependency; per-claim lease-version fencing on every guarded completion, requeue, recovery, and expiry-item write; one all-or-nothing shard transaction for each public batch; live user/role/assignment/route revalidation before each attempt; and a separately configured, hardened, internal-only executor runtime. Control unavailability is retryable without card writes; authorization loss is terminal without card writes.
 - Orchestrator · Status: Architect gate recorded; implementation in progress.
 - Implementation · Delivered: separate `cmd/executor` daemon, executor-owned ports/shard adapter, shared domain lifecycle validation, fenced batch and expiry claims/recovery/results, live directory/routing authorization, expiry scheduling, sanitized diagnostics/metrics, dedicated least-privilege runtime role, append-only migrations, hardened internal Compose service, and verification coverage.
-- Automated tests · PASSED: Go 1.27.1; focused executor tests, `go test -count=1 ./...`, `go vet ./...`, database-harness unit/skip verification, `docker compose --env-file .env.example config --quiet`, and `git diff --check`.
-- Automated tests · BLOCKED: `go test -race ./...` cannot run on this host: CGO is disabled by default, and with `CGO_ENABLED=1` Go reports that `gcc` is absent. PostgreSQL/Docker executor integration acceptance cannot run without a working Docker/PostgreSQL environment.
-- QA and Security · PENDING: both independent reviewers identified concrete issues, which were addressed and re-tested; their final approval turns could not complete because the review-agent sessions exhausted their tool budget. No approval is inferred.
-- Orchestrator · Status: Implementation delivered; feature closeout remains blocked on the required race, PostgreSQL/Compose acceptance, and final QA/security gates.
+- Automated tests · PASSED: `go version` reports `go1.27.1 windows/amd64`; `go test -count=1 ./...`; `go test -race ./...` with GCC; `go vet ./...`; and `git diff --check` all pass.
+- Database acceptance · PASSED: `CI_TEST_DATABASE=1` PostgreSQL executor integration acceptance and the database harness pass. They exercise tenant isolation, runtime grants, stale-worker fencing, concurrent claim exclusion, lease recovery, lost-acknowledgement safety, atomic batch application, expiry aggregates, retry exhaustion, and idempotent manual retry.
+- Compose acceptance · PASSED: the isolated Docker Compose smoke/functional suite passes API and executor independent lifecycle checks, explicitly named multi-replica executor identities, persistence, initialization gating, non-root execution, and PostgreSQL outage/recovery.
+- QA · APPROVED: fresh independent QA review after the final corrections, including ignored-operation terminalization/auditing and mixed/invalid multi-card batch atomicity.
+- Security · APPROVED: fresh independent security review after the final corrections, including bounded expiry scheduling, completed-run reopening only for newly eligible cards, executor least-privilege denial coverage, RLS isolation, and fenced parameterized SQL.
+- Orchestrator · Status: All required BATCH-EXECUTOR-001 gates passed; feature complete.
 
 ## 2026-09-14 — CARD-STATUS-BATCH-API-001: Card-status batch API
 

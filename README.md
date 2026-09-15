@@ -54,7 +54,7 @@ The following deliberately public database defaults support local POC startup:
 
 The app receives three separate runtime passwords. Runtime accounts have no ownership, role/database creation, superuser, replication or RLS bypass privileges.
 
-Copy `.env.example` to `.env` only when you want to override the API port, database names, shard ID, technical passwords, executor tuning, or the POC JWT key. `.env` is ignored by Git and excluded from image builds. Every executor replica needs an explicit, unique `EXECUTOR_ID`; Compose refuses to start it without one. Set a unique `AUTH_JWT_PRIVATE_KEY_B64` from secret configuration in every production deployment; never use the committed POC key.
+Copy `.env.example` to `.env` only when you want to override the API port, database names, shard ID, technical passwords, executor tuning, or the POC JWT key. `.env` is ignored by Git and excluded from image builds. The default `EXECUTOR_ID` is `executor-dev-01` for a single local executor; set a unique value for every executor replica outside that simple setup. Set a unique `AUTH_JWT_PRIVATE_KEY_B64` from secret configuration in every production deployment; never use the committed POC key.
 
 **Existing volumes retain passwords.** Changing `POSTGRES_PASSWORD` in `.env` does not change an initialized PostgreSQL administrator password. Runtime account provisioning also preserves existing technical passwords and verifies the supplied credentials; a mismatch fails initialization. To change a password while preserving data, use an authenticated administrator session and psql's `\password account_name`, then update `.env` to match. Application staff passwords are likewise never reset by seeds.
 

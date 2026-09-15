@@ -82,14 +82,31 @@ func run(logger *slog.Logger) error {
 		defer stop()
 		_ = server.Shutdown(shutdownCtx)
 	}()
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- server.Serve(listener) }()
 	logger.Info("executor started", "address", listener.Addr().String())
-	if err = server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return errors.New("executor HTTP server stopped unexpectedly")
+	select {
+	case err = <-errCh:
+		shutdownCtx, stop := context.WithTimeout(context.Background(), config.DrainTimeout)
+		defer stop()
+		_ = server.Shutdown(shutdownCtx)
+		serverErr := <-serveErr
+		if err != nil {
+			return err
+		}
+		if serverErr != nil && !errors.Is(serverErr, http.ErrServerClosed) {
+			return errors.New("executor HTTP server stopped unexpectedly")
+		}
+		return nil
+	case err = <-serveErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return errors.New("executor HTTP server stopped unexpectedly")
+		}
+		if err = <-errCh; err != nil {
+			return err
+		}
+		return nil
 	}
-	if err = <-errCh; err != nil {
-		return err
-	}
-	return nil
 }
 
 type directory struct {

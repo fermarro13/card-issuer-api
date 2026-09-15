@@ -146,7 +146,7 @@ The versioned SQL migrations are the source of truth for nullability, defaults, 
 | `account_reference_id` | `uuid NOT NULL` |
 | `product_id` | `uuid NOT NULL` |
 | `status` | `bank.card_state NOT NULL DEFAULT 'pending'` |
-| `credential_reference` | `text CHECK (credential_reference IS NULL OR btrim(credential_reference)<>'')`; v1 local issue/replacement stores a generated non-secret opaque reference. |
+| `masked_pan` | `text`; immutable once non-null and limited to the six-leading/four-trailing-digit masked display. Existing cards remain null until a new issuance or replacement supplies a display. |
 | `predecessor_card_id` | `uuid` |
 | `issued_at` | `timestamptz` |
 | `activated_at` | `timestamptz` |
@@ -182,6 +182,17 @@ The versioned SQL migrations are the source of truth for nullability, defaults, 
 | `updated_at` | `timestamptz NOT NULL DEFAULT now()` |
 | `created_by` | `uuid`; null for a system-created operation |
 | `updated_by` | `uuid`; null for a system-created operation |
+
+## `bank.authorization_verifications`
+
+| Column | SQL definition |
+| --- | --- |
+| `entity_id`, `id` | Tenant and record identity |
+| `decision_id` | Unique server decision UUID per bank |
+| `bank_transaction_reference` | Unique opaque bank replay reference per bank |
+| `card_id` | Nullable same-bank resolved card identity |
+| `decision`, `decision_code` | `approved` or generic `declined` plus an allow-listed safe internal code; no credential data or fingerprints |
+| `decided_at`, `created_at` | Decision and persistence timestamps |
 
 ## `bank.card_status_history`
 

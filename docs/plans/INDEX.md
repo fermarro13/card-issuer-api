@@ -2,7 +2,8 @@
 
 | Date | Plan | Status |
 | --- | --- | --- |
-| 2026-09-14 | [Batch Executor](2026-09-14-batch-executor.md) | Implementation delivered; QA/security and environment gates pending |
+| 2026-09-15 | [Issuer Authorization Vault and Credential Verifier](2026-09-15-issuer-authorization-vault-and-credential-verifier.md) | Implementation delivered; production-vault and mTLS provisioning review pending |
+| 2026-09-14 | [Batch Executor](2026-09-14-batch-executor.md) | Complete; architect, QA, security, and all automated acceptance gates approved |
 | 2026-09-14 | [Card-status Batch API](2026-09-14-card-status-batch-api.md) | Implementation delivered; QA/security review pending |
 | 2026-09-10 | [Agentic Development Harness](2026-09-10-agentic-development-harness.md) | Implemented |
 | 2026-09-10 | [Go Version Governance in the Agent Harness](2026-09-10-go-version-governance.md) | Implemented |

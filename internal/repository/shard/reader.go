@@ -38,7 +38,7 @@ func (r *Reader) Card(ctx context.Context, bank, id string) (domain.Card, error)
 		return domain.Card{}, err
 	}
 	defer tx.Rollback(ctx)
-	card, err := scanCard(tx.QueryRow(ctx, "SELECT id::text,client_id::text,account_reference_id::text,product_id::text,status::text,predecessor_card_id::text,issued_at,activated_at,suspended_at,closed_at,expires_at,version,created_at,updated_at FROM bank.cards WHERE entity_id=$1 AND id=$2", bank, id))
+	card, err := scanCard(tx.QueryRow(ctx, "SELECT id::text,client_id::text,account_reference_id::text,product_id::text,status::text,masked_pan,predecessor_card_id::text,issued_at,activated_at,suspended_at,closed_at,expires_at,version,created_at,updated_at FROM bank.cards WHERE entity_id=$1 AND id=$2", bank, id))
 	if err != nil {
 		return domain.Card{}, fmt.Errorf("get card: %w", err)
 	}
@@ -54,7 +54,7 @@ func (r *Reader) Cards(ctx context.Context, bank string, filter domain.CardFilte
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, "SELECT id::text,client_id::text,account_reference_id::text,product_id::text,status::text,predecessor_card_id::text,issued_at,activated_at,suspended_at,closed_at,expires_at,version,created_at,updated_at FROM bank.cards WHERE entity_id=$1 AND ($2::uuid IS NULL OR client_id=$2) AND ($3::uuid IS NULL OR account_reference_id=$3) AND ($4::uuid IS NULL OR product_id=$4) AND ($5::bank.card_state IS NULL OR status=$5) ORDER BY created_at DESC,id DESC", bank, nullable(filter.ClientID), nullable(filter.AccountID), nullable(filter.ProductID), nullable(filter.Status))
+	rows, err := tx.Query(ctx, "SELECT id::text,client_id::text,account_reference_id::text,product_id::text,status::text,masked_pan,predecessor_card_id::text,issued_at,activated_at,suspended_at,closed_at,expires_at,version,created_at,updated_at FROM bank.cards WHERE entity_id=$1 AND ($2::uuid IS NULL OR client_id=$2) AND ($3::uuid IS NULL OR account_reference_id=$3) AND ($4::uuid IS NULL OR product_id=$4) AND ($5::bank.card_state IS NULL OR status=$5) ORDER BY created_at DESC,id DESC", bank, nullable(filter.ClientID), nullable(filter.AccountID), nullable(filter.ProductID), nullable(filter.Status))
 	if err != nil {
 		return nil, fmt.Errorf("list cards: %w", err)
 	}
@@ -357,7 +357,7 @@ func scanEntity(row cardRow) (domain.Entity, error) {
 func scanCard(row cardRow) (domain.Card, error) {
 	var card domain.Card
 	err := row.Scan(
-		&card.ID, &card.ClientID, &card.AccountReferenceID, &card.ProductID, &card.Status,
+		&card.ID, &card.ClientID, &card.AccountReferenceID, &card.ProductID, &card.Status, &card.MaskedPAN,
 		&card.PredecessorCardID, &card.IssuedAt, &card.ActivatedAt, &card.SuspendedAt,
 		&card.ClosedAt, &card.ExpiresAt, &card.Version, &card.CreatedAt, &card.UpdatedAt,
 	)
@@ -514,7 +514,7 @@ func (t transaction) IssueReferencesValid(ctx context.Context, bank, clientID, a
 }
 
 func (t transaction) IssueCard(ctx context.Context, bank string, input domain.CardIssue) (domain.Card, domain.CardOperation, error) {
-	card, err := scanCard(t.tx.QueryRow(ctx, "INSERT INTO bank.cards(entity_id,id,client_id,account_reference_id,product_id,status,credential_reference,issued_at,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,'issued',$6,clock_timestamp(),$7,$7) RETURNING id::text,client_id::text,account_reference_id::text,product_id::text,status::text,predecessor_card_id::text,issued_at,activated_at,suspended_at,closed_at,expires_at,version,created_at,updated_at", bank, input.CardID, input.ClientID, input.AccountReferenceID, input.ProductID, input.CredentialReference, input.ActorID))
+	card, err := scanCard(t.tx.QueryRow(ctx, "INSERT INTO bank.cards(entity_id,id,client_id,account_reference_id,product_id,status,masked_pan,issued_at,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,'issued',$6,clock_timestamp(),$7,$7) RETURNING id::text,client_id::text,account_reference_id::text,product_id::text,status::text,masked_pan,predecessor_card_id::text,issued_at,activated_at,suspended_at,closed_at,expires_at,version,created_at,updated_at", bank, input.CardID, input.ClientID, input.AccountReferenceID, input.ProductID, input.MaskedPAN, input.ActorID))
 	if err != nil {
 		return domain.Card{}, domain.CardOperation{}, err
 	}
@@ -547,7 +547,7 @@ func (t transaction) ReplacementPending(ctx context.Context, bank, predecessorID
 }
 
 func (t transaction) ReplaceCard(ctx context.Context, bank string, input domain.CardReplacement) (domain.Card, domain.CardOperation, error) {
-	card, err := scanCard(t.tx.QueryRow(ctx, "INSERT INTO bank.cards(entity_id,id,client_id,account_reference_id,product_id,status,credential_reference,predecessor_card_id,issued_at,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,'issued',$6,$7,clock_timestamp(),$8,$8) RETURNING id::text,client_id::text,account_reference_id::text,product_id::text,status::text,predecessor_card_id::text,issued_at,activated_at,suspended_at,closed_at,expires_at,version,created_at,updated_at", bank, input.SuccessorID, input.ClientID, input.AccountReferenceID, input.ProductID, input.CredentialReference, input.PredecessorID, input.ActorID))
+	card, err := scanCard(t.tx.QueryRow(ctx, "INSERT INTO bank.cards(entity_id,id,client_id,account_reference_id,product_id,status,masked_pan,predecessor_card_id,issued_at,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,'issued',$6,$7,clock_timestamp(),$8,$8) RETURNING id::text,client_id::text,account_reference_id::text,product_id::text,status::text,masked_pan,predecessor_card_id::text,issued_at,activated_at,suspended_at,closed_at,expires_at,version,created_at,updated_at", bank, input.SuccessorID, input.ClientID, input.AccountReferenceID, input.ProductID, input.MaskedPAN, input.PredecessorID, input.ActorID))
 	if err != nil {
 		return domain.Card{}, domain.CardOperation{}, err
 	}
@@ -585,7 +585,7 @@ func (t transaction) ApplyCardCommand(ctx context.Context, bank string, input do
 	if _, err = t.tx.Exec(ctx, "INSERT INTO bank.audit_events(entity_id,actor_user_id,actor_role,actor_entity_id,action,resource_type,resource_id,outcome,request_id,details) VALUES ($1,$2,$3,$4,$5,'card',$6,'succeeded',$7,$8)", bank, input.ActorID, input.ActorRole, nullable(input.ActorEntityID), "card."+input.Action, input.CardID, input.RequestID, []byte(fmt.Sprintf(`{"ignored":%t}`, input.Ignored))); err != nil {
 		return domain.Card{}, domain.CardOperation{}, err
 	}
-	card, err := scanCard(t.tx.QueryRow(ctx, "SELECT id::text,client_id::text,account_reference_id::text,product_id::text,status::text,predecessor_card_id::text,issued_at,activated_at,suspended_at,closed_at,expires_at,version,created_at,updated_at FROM bank.cards WHERE entity_id=$1 AND id=$2", bank, input.CardID))
+	card, err := scanCard(t.tx.QueryRow(ctx, "SELECT id::text,client_id::text,account_reference_id::text,product_id::text,status::text,masked_pan,predecessor_card_id::text,issued_at,activated_at,suspended_at,closed_at,expires_at,version,created_at,updated_at FROM bank.cards WHERE entity_id=$1 AND id=$2", bank, input.CardID))
 	if err != nil {
 		return domain.Card{}, domain.CardOperation{}, err
 	}
@@ -633,6 +633,10 @@ func (t transaction) updateCardStatus(ctx context.Context, action, bank, id, sta
 }
 
 func (t transaction) RetryExpiryItem(ctx context.Context, bank, run, item, actor string) (bool, error) {
+	_, err := t.tx.Exec(ctx, "UPDATE bank.card_expiry_runs r SET status='processing',completed_at=NULL,updated_at=clock_timestamp() WHERE r.entity_id=$1 AND r.id=$2 AND r.status='completed' AND EXISTS (SELECT FROM bank.card_expiry_run_items i WHERE i.entity_id=r.entity_id AND i.expiry_run_id=r.id AND i.id=$3 AND i.status='manual_retry_required')", bank, run, item)
+	if err != nil {
+		return false, err
+	}
 	tag, err := t.tx.Exec(ctx, "UPDATE bank.card_expiry_run_items i SET status='pending',manual_retry_count=manual_retry_count+1,manual_retry_by=$4,manual_retry_at=clock_timestamp(),next_attempt_at=clock_timestamp() WHERE i.entity_id=$1 AND i.expiry_run_id=$2 AND i.id=$3 AND i.status='manual_retry_required' AND EXISTS (SELECT FROM bank.cards c WHERE c.entity_id=i.entity_id AND c.id=i.card_id AND c.status<>'expired')", bank, run, item, actor)
 	if err != nil {
 		return false, err

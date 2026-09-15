@@ -49,6 +49,7 @@ type Card struct {
 	AccountReferenceID string     `json:"account_reference_id"`
 	ProductID          string     `json:"product_id"`
 	Status             string     `json:"status"`
+	MaskedPAN          *string    `json:"masked_pan"`
 	PredecessorCardID  *string    `json:"predecessor_card_id"`
 	IssuedAt           *time.Time `json:"issued_at"`
 	ActivatedAt        *time.Time `json:"activated_at"`
@@ -207,17 +208,17 @@ type ReferenceAudit struct {
 	RequestID     string
 }
 type CardIssue struct {
-	CardID              string
-	OperationID         string
-	ClientID            string
-	AccountReferenceID  string
-	ProductID           string
-	CredentialReference string
-	Reason              string
-	ActorID             string
-	ActorRole           string
-	ActorEntityID       string
-	RequestID           string
+	CardID             string
+	OperationID        string
+	ClientID           string
+	AccountReferenceID string
+	ProductID          string
+	MaskedPAN          string
+	Reason             string
+	ActorID            string
+	ActorRole          string
+	ActorEntityID      string
+	RequestID          string
 }
 type CardState struct {
 	Status             string
@@ -225,19 +226,37 @@ type CardState struct {
 	AccountReferenceID string
 	ProductID          string
 }
+type CardAuthorizationState struct {
+	CardID    string
+	Status    string
+	ExpiresAt *time.Time
+}
+type AuthorizationVerification struct {
+	DecisionID         string
+	BankTransactionRef string
+	Approved           bool
+}
+type AuthorizationVerificationCreate struct {
+	DecisionID         string
+	BankTransactionRef string
+	CardID             string
+	Decision           string
+	DecisionCode       string
+	DecidedAt          time.Time
+}
 type CardReplacement struct {
-	SuccessorID         string
-	OperationID         string
-	PredecessorID       string
-	ClientID            string
-	AccountReferenceID  string
-	ProductID           string
-	CredentialReference string
-	Reason              string
-	ActorID             string
-	ActorRole           string
-	ActorEntityID       string
-	RequestID           string
+	SuccessorID        string
+	OperationID        string
+	PredecessorID      string
+	ClientID           string
+	AccountReferenceID string
+	ProductID          string
+	MaskedPAN          string
+	Reason             string
+	ActorID            string
+	ActorRole          string
+	ActorEntityID      string
+	RequestID          string
 }
 type CardCommand struct {
 	CardID                 string

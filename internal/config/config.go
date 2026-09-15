@@ -12,6 +12,9 @@ import (
 )
 
 type Config struct {
+	Environment   string
+	VaultMode     string
+	TestVaultKey  []byte
 	HTTPAddress   string
 	AuthURL       string
 	ControlURL    string
@@ -35,6 +38,34 @@ func load(getenv func(string) string) (Config, error) {
 		return fallback
 	}
 	address := value("HTTP_ADDR", ":8080")
+	environment := value("APP_ENV", "development")
+	if environment != "development" && environment != "test" && environment != "production" {
+		return Config{}, errors.New("invalid APP_ENV")
+	}
+	vaultMode := value("CREDENTIAL_VAULT_MODE", "")
+	if vaultMode == "" {
+		vaultMode = "external"
+		if environment == "development" || environment == "test" {
+			vaultMode = "memory"
+		}
+	}
+	if vaultMode != "memory" && vaultMode != "external" {
+		return Config{}, errors.New("invalid CREDENTIAL_VAULT_MODE")
+	}
+	if vaultMode == "memory" && environment == "production" {
+		return Config{}, errors.New("CREDENTIAL_VAULT_MODE=memory is not allowed in production")
+	}
+	var testVaultKey []byte
+	if vaultMode == "memory" {
+		var err error
+		testVaultKey, err = base64.RawStdEncoding.DecodeString(getenv("TEST_VAULT_KEY_B64"))
+		if err != nil {
+			testVaultKey, err = base64.StdEncoding.DecodeString(getenv("TEST_VAULT_KEY_B64"))
+		}
+		if err != nil || len(testVaultKey) < 32 {
+			return Config{}, errors.New("invalid TEST_VAULT_KEY_B64")
+		}
+	}
 	if _, _, err := net.SplitHostPort(address); err != nil {
 		return Config{}, errors.New("invalid HTTP_ADDR")
 	}
@@ -93,5 +124,5 @@ func load(getenv func(string) string) (Config, error) {
 	if issuer == "" || audience == "" {
 		return Config{}, errors.New("AUTH_JWT_ISSUER and AUTH_JWT_AUDIENCE are required")
 	}
-	return Config{HTTPAddress: address, AuthURL: auth, ControlURL: control, ShardURL: shard, ShardID: shardID, CursorKey: cursorKey, JWTPrivateKey: ed25519.PrivateKey(privateKey), JWTIssuer: issuer, JWTAudience: audience}, nil
+	return Config{Environment: environment, VaultMode: vaultMode, TestVaultKey: testVaultKey, HTTPAddress: address, AuthURL: auth, ControlURL: control, ShardURL: shard, ShardID: shardID, CursorKey: cursorKey, JWTPrivateKey: ed25519.PrivateKey(privateKey), JWTIssuer: issuer, JWTAudience: audience}, nil
 }

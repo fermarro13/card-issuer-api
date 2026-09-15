@@ -50,12 +50,23 @@ func TestInvalidConfigurationDoesNotExposeCredentials(t *testing.T) {
 	}
 }
 
+func TestMemoryVaultIsRejectedInProduction(t *testing.T) {
+	values := validValues()
+	values["APP_ENV"] = "production"
+	values["CREDENTIAL_VAULT_MODE"] = "memory"
+	_, err := load(func(key string) string { return values[key] })
+	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("production memory vault error = %v", err)
+	}
+}
+
 func validValues() map[string]string {
 	return map[string]string{
 		"CONTROL_DB_PASSWORD": "control", "AUTH_DB_PASSWORD": "auth", "SHARD_DB_PASSWORD": "shard",
 		"AUTH_JWT_PRIVATE_KEY_B64": base64.RawStdEncoding.EncodeToString(ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))),
 		"AUTH_JWT_ISSUER":          "issuer", "AUTH_JWT_AUDIENCE": "audience",
 		"API_CURSOR_HMAC_KEY_B64": base64.RawStdEncoding.EncodeToString(make([]byte, 32)),
+		"TEST_VAULT_KEY_B64":      base64.RawStdEncoding.EncodeToString(make([]byte, 32)),
 	}
 }
 

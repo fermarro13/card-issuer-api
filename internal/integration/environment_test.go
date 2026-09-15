@@ -23,6 +23,7 @@ import (
 	"card-issuer-api/internal/card"
 	"card-issuer-api/internal/catalog"
 	"card-issuer-api/internal/database"
+	"card-issuer-api/internal/executor"
 	authrepository "card-issuer-api/internal/repository/auth"
 	controlrepository "card-issuer-api/internal/repository/control"
 	routingrepository "card-issuer-api/internal/repository/routing"
@@ -30,7 +31,17 @@ import (
 	"card-issuer-api/internal/server"
 	"card-issuer-api/internal/staff"
 	"card-issuer-api/internal/tenant"
+	"card-issuer-api/internal/vault"
 )
+
+func testVault(t *testing.T) *vault.InMemory {
+	t.Helper()
+	credentialVault, err := vault.NewInMemory("test", make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return credentialVault
+}
 
 func TestRuntimeDatabaseEnvironment(t *testing.T) {
 	if runtime.Version() != "go1.27.1" {
@@ -342,7 +353,7 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 			Bank:    bank.New(controlrepository.NewBank(authPool), routes, shardrepository.NewBank(shard), "shard_01"),
 			Access:  tenant.New(routes, "shard_01"),
 			Catalog: catalog.New(shardrepository.NewCatalog(shard)),
-			Card:    card.New(shardrepository.NewCard(shard)),
+			Card:    card.New(shardrepository.NewCard(shard), testVault(t)),
 			Batch:   batch.New(shardrepository.NewBatch(shard)),
 			Staff:   staff.New(controlrepository.NewStaff(authPool), routes, "shard_01"),
 		}, []byte("integration-cursor-key")))
@@ -374,7 +385,7 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 		}
 		replayedProvision := request(http.MethodPost, "/v1/banks", provisionBody, "resource-provision")
 		if replayedProvision.Code != http.StatusCreated || replayedProvision.Body.String() != provisioned.Body.String() {
-			t.Fatalf("bank provision replay: %d %s", replayedProvision.Code, replayedProvision.Body.String())
+			t.Fatalf("bank provision replay: status=%d first=%q replay=%q", replayedProvision.Code, provisioned.Body.String(), replayedProvision.Body.String())
 		}
 		provisionedGet := request(http.MethodGet, "/v1/banks/"+provisionedID, "", "")
 		if provisionedGet.Code != http.StatusOK {
@@ -445,6 +456,175 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("readonly mutation: %d %s", w.Code, w.Body.String())
+		}
+	})
+	t.Run("executor_postgresql_acceptance", func(t *testing.T) {
+		const bankID = "10000000-0000-4000-8000-000000000001"
+		shardSQL := func(statement string) string {
+			t.Helper()
+			out, err := sql(shardDB, "BEGIN; "+statement+" COMMIT;")
+			if err != nil {
+				t.Fatalf("executor fixture SQL failed: %v %s", err, out)
+			}
+			return out
+		}
+		activeCardID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; SELECT id::text FROM bank.cards WHERE status='active' ORDER BY created_at DESC LIMIT 1;")
+		if activeCardID == "" {
+			t.Fatal("public API fixture did not leave an active card for executor acceptance")
+		}
+		expiryCardID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.cards(entity_id,client_id,account_reference_id,product_id,status,created_by,updated_by) SELECT '" + bankID + "',c.id,a.id,p.id,'issued','20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001' FROM bank.clients c JOIN bank.account_references a ON a.entity_id=c.entity_id AND a.client_id=c.id JOIN bank.card_products p ON p.entity_id=c.entity_id WHERE c.entity_id='" + bankID + "' AND c.external_client_ref='resource-client' AND p.product_code='RESOURCE_TEST' LIMIT 1 RETURNING id::text;")
+		if expiryCardID == "" {
+			t.Fatal("could not create expiry retry fixture")
+		}
+
+		batchCreatedAt := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.idempotency_records(entity_id,operation_scope,idempotency_key,request_fingerprint,expires_at,created_by,updated_by) VALUES ('" + bankID + "','executor_acceptance','executor-acceptance-key',decode(repeat('00',32),'hex'),clock_timestamp()+interval '1 day','20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001') RETURNING id::text;")
+		batchID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.card_status_batches(entity_id,target_status,reason,requested_by,requester_role,request_id,idempotency_record_id,item_count,created_by,updated_by) VALUES ('" + bankID + "','suspended','executor acceptance','20000000-0000-4000-8000-000000000001','issuer_operator',gen_random_uuid(),'" + batchCreatedAt + "',1,'20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001') RETURNING id::text;")
+		opID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.card_operations(entity_id,card_id,action,status,reason,actor_user_id,actor_role,request_id,created_by,updated_by) VALUES ('" + bankID + "','" + activeCardID + "','suspend','queued','executor acceptance','20000000-0000-4000-8000-000000000001','issuer_operator',gen_random_uuid(),'20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001') RETURNING id::text;")
+		shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.card_status_batch_items(entity_id,batch_id,card_id,operation_id) VALUES ('" + bankID + "','" + batchID + "','" + activeCardID + "','" + opID + "'); UPDATE bank.card_status_batches SET status='queued',next_attempt_at=clock_timestamp() WHERE entity_id='" + bankID + "' AND id='" + batchID + "';")
+
+		store := shardrepository.NewExecutor(executorShard)
+		claim := executor.Claim{BankID: bankID, LeaseDuration: 10 * time.Millisecond}
+		type result struct {
+			batch *executor.Batch
+			owner string
+			err   error
+		}
+		claims := make(chan result, 2)
+		for _, owner := range []string{"executor-a", "executor-b"} {
+			go func(owner string) {
+				batch, err := store.ClaimBatch(ctx, executor.Claim{BankID: bankID, Owner: owner, LeaseDuration: claim.LeaseDuration})
+				claims <- result{batch, owner, err}
+			}(owner)
+		}
+		var initial result
+		for range 2 {
+			got := <-claims
+			if got.err != nil {
+				t.Fatalf("concurrent claim: %v", got.err)
+			}
+			if got.batch != nil {
+				if initial.batch != nil {
+					t.Fatal("concurrent executors claimed the same batch")
+				}
+				initial = got
+			}
+		}
+		if initial.batch == nil {
+			t.Fatal("no executor claimed queued batch")
+		}
+		time.Sleep(20 * time.Millisecond)
+		if recovered, err := store.RecoverBatches(ctx, executor.Claim{BankID: bankID}); err != nil || recovered != 1 {
+			t.Fatalf("lease recovery = %d, %v", recovered, err)
+		}
+		if err := store.ApplyBatch(ctx, *initial.batch, initial.owner); !errors.Is(err, executor.ErrStale) {
+			t.Fatalf("stale worker applied recovered batch: %v", err)
+		}
+		fresh, err := store.ClaimBatch(ctx, executor.Claim{BankID: bankID, Owner: "executor-c", LeaseDuration: time.Second})
+		if err != nil || fresh == nil {
+			t.Fatalf("claim recovered batch: %v", err)
+		}
+		if err := store.ApplyBatch(ctx, *fresh, "executor-c"); err != nil {
+			t.Fatalf("apply recovered batch: %v", err)
+		}
+		if err := store.ApplyBatch(ctx, *fresh, "executor-c"); !errors.Is(err, executor.ErrStale) {
+			t.Fatalf("lost acknowledgement duplicated application: %v", err)
+		}
+		if histories := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; SELECT count(*) FROM bank.card_status_history WHERE operation_id='" + opID + "';"); histories != "1" {
+			t.Fatalf("duplicate batch history: %s", histories)
+		}
+		ignoredIdempotencyID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.idempotency_records(entity_id,operation_scope,idempotency_key,request_fingerprint,expires_at,created_by,updated_by) VALUES ('" + bankID + "','executor_ignored','executor-ignored-key',decode(repeat('01',32),'hex'),clock_timestamp()+interval '1 day','20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001') RETURNING id::text;")
+		validIgnoredCardID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.cards(entity_id,client_id,account_reference_id,product_id,status,activated_at,created_by,updated_by) SELECT '" + bankID + "',c.id,a.id,p.id,'active',clock_timestamp(),'20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001' FROM bank.clients c JOIN bank.account_references a ON a.entity_id=c.entity_id AND a.client_id=c.id JOIN bank.card_products p ON p.entity_id=c.entity_id WHERE c.entity_id='" + bankID + "' AND c.external_client_ref='resource-client' AND p.product_code='RESOURCE_TEST' LIMIT 1 RETURNING id::text;")
+		ignoredBatchID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.card_status_batches(entity_id,target_status,reason,requested_by,requester_role,request_id,idempotency_record_id,item_count,created_by,updated_by) VALUES ('" + bankID + "','suspended','executor ignored acceptance','20000000-0000-4000-8000-000000000001','issuer_operator',gen_random_uuid(),'" + ignoredIdempotencyID + "',2,'20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001') RETURNING id::text;")
+		ignoredOpID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.card_operations(entity_id,card_id,action,status,reason,actor_user_id,actor_role,request_id,created_by,updated_by) VALUES ('" + bankID + "','" + activeCardID + "','suspend','queued','executor ignored acceptance','20000000-0000-4000-8000-000000000001','issuer_operator',gen_random_uuid(),'20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001') RETURNING id::text;")
+		validIgnoredOpID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.card_operations(entity_id,card_id,action,status,reason,actor_user_id,actor_role,request_id,created_by,updated_by) VALUES ('" + bankID + "','" + validIgnoredCardID + "','suspend','queued','executor ignored acceptance','20000000-0000-4000-8000-000000000001','issuer_operator',gen_random_uuid(),'20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001') RETURNING id::text;")
+		shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.card_status_batch_items(entity_id,batch_id,card_id,operation_id) VALUES ('" + bankID + "','" + ignoredBatchID + "','" + activeCardID + "','" + ignoredOpID + "'),('" + bankID + "','" + ignoredBatchID + "','" + validIgnoredCardID + "','" + validIgnoredOpID + "'); UPDATE bank.card_status_batches SET status='queued',next_attempt_at=clock_timestamp() WHERE entity_id='" + bankID + "' AND id='" + ignoredBatchID + "';")
+		ignoredBatch, err := store.ClaimBatch(ctx, executor.Claim{BankID: bankID, Owner: "executor-c", LeaseDuration: time.Second})
+		if err != nil || ignoredBatch == nil {
+			t.Fatalf("claim ignored batch: %v", err)
+		}
+		if err = store.ApplyBatch(ctx, *ignoredBatch, "executor-c"); err != nil {
+			t.Fatalf("apply ignored batch: %v", err)
+		}
+		if outcome := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; SELECT applied_count::text||':'||ignored_count FROM bank.card_status_batches WHERE id='" + ignoredBatchID + "';"); outcome != "1:1" {
+			t.Fatalf("ignored batch operation outcome: %s", outcome)
+		}
+		if outcome := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; SELECT i.outcome||':'||o.status||':'||(o.completed_at IS NOT NULL)::text FROM bank.card_status_batch_items i JOIN bank.card_operations o ON o.entity_id=i.entity_id AND o.id=i.operation_id WHERE i.operation_id='" + ignoredOpID + "';"); outcome != "ignored:succeeded:true" {
+			t.Fatalf("ignored item operation outcome: %s", outcome)
+		}
+		if outcome := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; SELECT c.status||':'||i.outcome||':'||o.status FROM bank.cards c JOIN bank.card_status_batch_items i ON i.entity_id=c.entity_id AND i.card_id=c.id JOIN bank.card_operations o ON o.entity_id=i.entity_id AND o.id=i.operation_id WHERE i.operation_id='" + validIgnoredOpID + "';"); outcome != "suspended:applied:succeeded" {
+			t.Fatalf("multi-card applied item outcome: %s", outcome)
+		}
+		if histories := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; SELECT count(*) FROM bank.card_status_history WHERE operation_id='" + ignoredOpID + "';"); histories != "0" {
+			t.Fatalf("ignored batch wrote history: %s", histories)
+		}
+		rollbackIdempotencyID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.idempotency_records(entity_id,operation_scope,idempotency_key,request_fingerprint,expires_at,created_by,updated_by) VALUES ('" + bankID + "','executor_atomic','executor-atomic-key',decode(repeat('02',32),'hex'),clock_timestamp()+interval '1 day','20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001') RETURNING id::text;")
+		rollbackCardID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.cards(entity_id,client_id,account_reference_id,product_id,status,activated_at,created_by,updated_by) SELECT '" + bankID + "',c.id,a.id,p.id,'active',clock_timestamp(),'20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001' FROM bank.clients c JOIN bank.account_references a ON a.entity_id=c.entity_id AND a.client_id=c.id JOIN bank.card_products p ON p.entity_id=c.entity_id WHERE c.entity_id='" + bankID + "' AND c.external_client_ref='resource-client' AND p.product_code='RESOURCE_TEST' LIMIT 1 RETURNING id::text;")
+		rollbackBatchID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.card_status_batches(entity_id,target_status,reason,requested_by,requester_role,request_id,idempotency_record_id,item_count,created_by,updated_by) VALUES ('" + bankID + "','suspended','executor atomic acceptance','20000000-0000-4000-8000-000000000001','issuer_operator',gen_random_uuid(),'" + rollbackIdempotencyID + "',2,'20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001') RETURNING id::text;")
+		rollbackValidOpID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.card_operations(entity_id,card_id,action,status,reason,actor_user_id,actor_role,request_id,created_by,updated_by) VALUES ('" + bankID + "','" + rollbackCardID + "','suspend','queued','executor atomic acceptance','20000000-0000-4000-8000-000000000001','issuer_operator',gen_random_uuid(),'20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001') RETURNING id::text;")
+		rollbackInvalidOpID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.card_operations(entity_id,card_id,action,status,reason,actor_user_id,actor_role,request_id,created_by,updated_by) VALUES ('" + bankID + "','" + expiryCardID + "','suspend','queued','executor atomic acceptance','20000000-0000-4000-8000-000000000001','issuer_operator',gen_random_uuid(),'20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001') RETURNING id::text;")
+		shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.card_status_batch_items(entity_id,batch_id,card_id,operation_id) VALUES ('" + bankID + "','" + rollbackBatchID + "','" + rollbackCardID + "','" + rollbackValidOpID + "'),('" + bankID + "','" + rollbackBatchID + "','" + expiryCardID + "','" + rollbackInvalidOpID + "'); UPDATE bank.card_status_batches SET status='queued',next_attempt_at=clock_timestamp() WHERE entity_id='" + bankID + "' AND id='" + rollbackBatchID + "';")
+		rollbackBatch, err := store.ClaimBatch(ctx, executor.Claim{BankID: bankID, Owner: "executor-c", LeaseDuration: time.Second})
+		if err != nil || rollbackBatch == nil {
+			t.Fatalf("claim atomic rollback batch: %v", err)
+		}
+		if err = store.ApplyBatch(ctx, *rollbackBatch, "executor-c"); err == nil {
+			t.Fatal("invalid multi-card batch was applied")
+		}
+		if state := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; SELECT c.status||':'||o.status FROM bank.cards c JOIN bank.card_operations o ON o.entity_id=c.entity_id AND o.card_id=c.id WHERE o.id='" + rollbackValidOpID + "';"); state != "active:queued" {
+			t.Fatalf("invalid batch was not atomic: %s", state)
+		}
+
+		shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; UPDATE bank.cards SET expires_at=clock_timestamp()-interval '1 minute' WHERE id IN ('" + activeCardID + "','" + expiryCardID + "');")
+		today := time.Now().UTC().Truncate(24 * time.Hour)
+		if err := store.EnsureExpiryRun(ctx, bankID, today, "executor-c"); err != nil {
+			t.Fatalf("ensure expiry run: %v", err)
+		}
+		completed, err := store.ClaimExpiryItem(ctx, executor.Claim{BankID: bankID, Owner: "executor-c", LeaseDuration: time.Second})
+		if err != nil || completed == nil {
+			t.Fatalf("claim expiry item: %v", err)
+		}
+		if err := store.ApplyExpiryItem(ctx, *completed, "executor-c"); err != nil {
+			t.Fatalf("apply expiry item: %v", err)
+		}
+		var retry *executor.ExpiryItem
+		for attempt := 0; attempt < 4; attempt++ {
+			retry, err = store.ClaimExpiryItem(ctx, executor.Claim{BankID: bankID, Owner: "executor-c", LeaseDuration: time.Second})
+			if err != nil || retry == nil {
+				t.Fatalf("claim expiry retry %d: %v", attempt, err)
+			}
+			if err := store.RequeueExpiryItem(ctx, *retry, "executor-c", 0); err != nil {
+				t.Fatalf("requeue expiry retry %d: %v", attempt, err)
+			}
+		}
+		if aggregate := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; SELECT expired_count::text||','||manual_retry_required_count::text FROM bank.card_expiry_runs WHERE id='" + retry.RunID + "';"); aggregate != "1,1" {
+			t.Fatalf("expiry aggregate = %s", aggregate)
+		}
+		retryService := card.New(shardrepository.NewCard(shard), testVault(t))
+		principal := auth.Principal{UserID: "20000000-0000-4000-8000-000000000001", Role: "issuer_operator"}
+		for range 2 {
+			if err := retryService.RetryExpiryWorkflow(ctx, principal, bankID, retry.RunID, retry.ID, "executor-manual-retry", []byte(`{"reason":"manual retry"}`), "manual retry", "90000000-0000-4000-8000-000000000199"); err != nil {
+				t.Fatalf("idempotent manual retry: %v", err)
+			}
+		}
+		if count := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; SELECT manual_retry_count FROM bank.card_expiry_run_items WHERE id='" + retry.ID + "';"); count != "1" {
+			t.Fatalf("manual retry count = %s", count)
+		}
+		manualRetry, err := store.ClaimExpiryItem(ctx, executor.Claim{BankID: bankID, Owner: "executor-c", LeaseDuration: time.Second})
+		if err != nil || manualRetry == nil {
+			t.Fatalf("claim manually retried expiry item: %v", err)
+		}
+		if err = store.ApplyExpiryItem(ctx, *manualRetry, "executor-c"); err != nil {
+			t.Fatalf("apply manually retried expiry item: %v", err)
+		}
+		lateExpiryCardID := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; INSERT INTO bank.cards(entity_id,client_id,account_reference_id,product_id,status,created_by,updated_by,expires_at) SELECT '" + bankID + "',c.id,a.id,p.id,'issued','20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',clock_timestamp()-interval '1 minute' FROM bank.clients c JOIN bank.account_references a ON a.entity_id=c.entity_id AND a.client_id=c.id JOIN bank.card_products p ON p.entity_id=c.entity_id WHERE c.entity_id='" + bankID + "' AND c.external_client_ref='resource-client' AND p.product_code='RESOURCE_TEST' LIMIT 1 RETURNING id::text;")
+		if lateExpiryCardID == "" {
+			t.Fatal("could not create late expiry fixture")
+		}
+		if err = store.EnsureExpiryRun(ctx, bankID, today, "executor-c"); err != nil {
+			t.Fatalf("schedule late card after completed expiry run: %v", err)
+		}
+		if state := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; SELECT status||':'||item_count FROM bank.card_expiry_runs WHERE id='" + retry.RunID + "';"); state != "processing:3" {
+			t.Fatalf("late expiry scheduling state = %s", state)
 		}
 	})
 	t.Run("live_readiness_outage_recovery", func(t *testing.T) {

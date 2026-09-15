@@ -45,7 +45,7 @@ This supports approval/review workflows without allowing draft membership or int
 
 Issue, replacement, activation, suspension, resumption, and closure make only local PostgreSQL changes. The API performs each individual card command synchronously in one shard transaction.
 
-Issue and replacement generate a non-secret opaque local credential reference. Each command commits the issued card, succeeded operation, status-history and audit evidence, and idempotency result atomically. PAN, CVV, credential material, and provider-like responses are neither stored nor returned. A future credential-provider integration is a separately designed asynchronous extension, not v1 behavior.
+Issue and replacement provision through the PCI-scoped credential vault using the new card UUID as correlation and idempotency identity. They persist only the vault's immutable masked display with card/status/audit evidence and a sanitized idempotency result. The initial successful issuance or replacement response may contain a one-time credential disclosure; its idempotency replay never does. PAN, CVV, verification-code hashes, raw provider responses, and payment-data fingerprints are never stored, logged, audited, or put in outbox messages. If local persistence fails after vault provisioning, the issuer requests vault revocation and reconciles uncertain outcomes by card UUID.
 
 ## HTTP conventions
 
@@ -64,7 +64,13 @@ Collection responses use cursor pagination:
 
 Default page size is 50 and maximum page size is 200. Cursors are opaque and ordered by immutable creation time plus ID.
 
-API versions are additive within `/v1`; incompatible changes require `/v2`. The API never returns password hashes, refresh tokens, provider credentials, PAN, CVV, or unredacted credential-provider responses.
+API versions are additive within `/v1`; incompatible changes require `/v2`. Except for the one-time issuance/replacement disclosure in the PCI-scoped flow, the API never returns password hashes, refresh tokens, credentials, PAN, CVV, or unredacted vault responses.
+
+## Bank authorization-verification boundary
+
+`cmd/authorization` is a separately deployed TLS 1.3 service. It accepts only mutually authenticated bank clients at `POST /v1/authorization-verifications`; its request holds an opaque bank transaction reference and transient credential fields. The service derives the bank solely from the enabled client certificate's SHA-256 fingerprint mapping and never accepts a bank identifier in the request body. The response contains only that transaction reference, a server decision ID, and `approved` or `declined`.
+
+The service records a tenant-scoped, unique transaction-reference decision with a nullable resolved card ID and allow-listed decision code. It stores no request body, credential, verification-code hash, or payment-data fingerprint. A duplicate reference returns the first safe decision without revalidation. Approval requires a successful vault check plus an `active`, unexpired same-bank card; every other case is a generic decline. No holds, balances, ledger entries, spending controls, fraud results, merchant data, or amounts are processed.
 
 ## Authentication and authorization
 
@@ -111,12 +117,12 @@ Creation and update responses return the current resource representation. Refere
 
 | Method and path | Behavior | Success |
 | --- | --- | --- |
-| `POST /v1/banks/{bankId}/cards` | Creates an `issued` card and succeeded `issue` operation from `client_id`, `account_reference_id`, `product_id`, and `reason`, with an opaque local credential reference. Issuer or assigned bank operator. | `201` with card and operation summaries. |
+| `POST /v1/banks/{bankId}/cards` | Provisions an `issued` card through the credential vault from `client_id`, `account_reference_id`, `product_id`, and `reason`. Issuer or assigned bank operator. | `201` with card/operation summaries and a one-time credential disclosure. |
 | `POST /v1/banks/{bankId}/cards/{cardId}:activate` | `issued` to `active`; when the card is a replacement, closes its predecessor in the same transaction. | `200` with card and operation. |
 | `POST /v1/banks/{bankId}/cards/{cardId}:suspend` | `active` to `suspended`. | `200` with card and operation. |
 | `POST /v1/banks/{bankId}/cards/{cardId}:resume` | `suspended` to `active`. | `200` with card and operation. |
 | `POST /v1/banks/{bankId}/cards/{cardId}:close` | Moves an eligible nonterminal card to `closed`. | `200` with card and operation. |
-| `POST /v1/banks/{bankId}/cards/{cardId}:replace` | Creates a linked `issued` successor and succeeded `replace` operation, with an opaque local credential reference. Issuer or assigned bank operator. | `201` with successor card and operation summaries. |
+| `POST /v1/banks/{bankId}/cards/{cardId}:replace` | Creates a linked `issued` successor through the credential vault. Issuer or assigned bank operator. | `201` with successor card/operation summaries and a one-time credential disclosure. |
 
 Each command body has a required nonempty `reason`. A request that targets the card's present status is a successful ignored operation: it writes operation/audit evidence but does not alter the card, increment its version, or append status history. Other invalid transitions return `422 invalid_card_transition`.
 

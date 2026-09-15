@@ -18,6 +18,8 @@ type ExecutorStore struct{ reader *Reader }
 
 func NewExecutor(pool *pgxpool.Pool) *ExecutorStore { return &ExecutorStore{reader: NewReader(pool)} }
 
+const expiryScheduleBatchSize = 200
+
 func (s *ExecutorStore) ClaimBatch(ctx context.Context, claim executor.Claim) (*executor.Batch, error) {
 	tx, err := s.reader.beginTenant(ctx, claim.BankID)
 	if err != nil {
@@ -53,9 +55,9 @@ func (s *ExecutorStore) RecoverBatches(ctx context.Context, claim executor.Claim
 	}
 	defer tx.Rollback(ctx)
 	tag, err := tx.Exec(ctx, `WITH expired AS (
-		SELECT ctid FROM bank.card_status_batches WHERE entity_id=$1 AND status='processing' AND lease_expires_at<=clock_timestamp() FOR UPDATE SKIP LOCKED)
-		UPDATE bank.card_status_batches b SET status='queued',lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=clock_timestamp(),updated_at=clock_timestamp()
-		FROM expired WHERE b.ctid=expired.ctid`, claim.BankID)
+		SELECT id FROM bank.card_status_batches WHERE entity_id=$1 AND status='processing' AND lease_expires_at<=clock_timestamp() FOR UPDATE SKIP LOCKED)
+		UPDATE bank.card_status_batches b SET status='queued',lease_owner=NULL,lease_expires_at=NULL,lease_version=lease_version+1,next_attempt_at=clock_timestamp(),updated_at=clock_timestamp()
+		FROM expired WHERE b.entity_id=$1 AND b.id=expired.id`, claim.BankID)
 	if err != nil {
 		return 0, fmt.Errorf("recover batch leases: %w", err)
 	}
@@ -101,16 +103,23 @@ func (s *ExecutorStore) ApplyBatch(ctx context.Context, batch executor.Batch, ow
 	if err = rows.Err(); err != nil {
 		return fmt.Errorf("iterate batch cards: %w", err)
 	}
+	rows.Close()
 	applied, ignored := 0, 0
 	for _, item := range items {
 		if item.ignored {
 			if _, err = tx.Exec(ctx, "UPDATE bank.card_status_batch_items SET outcome='ignored' WHERE entity_id=$1 AND id=$2 AND outcome='pending'", batch.BankID, item.id); err != nil {
 				return err
 			}
+			if _, err = tx.Exec(ctx, `UPDATE bank.card_operations SET status='succeeded',executor_identity=$3,started_at=clock_timestamp(),completed_at=clock_timestamp(),updated_by=$4,updated_at=clock_timestamp() WHERE entity_id=$1 AND id=$2 AND status='queued'`, batch.BankID, item.operationID, owner, batch.RequestedBy); err != nil {
+				return err
+			}
+			if _, err = tx.Exec(ctx, `INSERT INTO bank.audit_events(entity_id,actor_user_id,actor_role,actor_entity_id,executor_identity,action,resource_type,resource_id,outcome,request_id,details) VALUES ($1,$2,$3,$4,$5,'batch.apply','card',$6,'succeeded',$7,'{"ignored":true}')`, batch.BankID, batch.RequestedBy, batch.RequesterRole, nullable(batch.RequesterBankID), owner, item.cardID, batch.RequestID); err != nil {
+				return err
+			}
 			ignored++
 			continue
 		}
-		if _, err = tx.Exec(ctx, `UPDATE bank.cards SET status=$3,activated_at=CASE WHEN $3='active' THEN clock_timestamp() ELSE activated_at END,suspended_at=CASE WHEN $3='suspended' THEN clock_timestamp() ELSE suspended_at END,closed_at=CASE WHEN $3='closed' THEN clock_timestamp() ELSE closed_at END,version=version+1,updated_by=$4,updated_at=clock_timestamp() WHERE entity_id=$1 AND id=$2`, batch.BankID, item.cardID, batch.TargetStatus, batch.RequestedBy); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE bank.cards SET status=$3::bank.card_state,activated_at=CASE WHEN $3::bank.card_state='active' THEN clock_timestamp() ELSE activated_at END,suspended_at=CASE WHEN $3::bank.card_state='suspended' THEN clock_timestamp() ELSE suspended_at END,closed_at=CASE WHEN $3::bank.card_state='closed' THEN clock_timestamp() ELSE closed_at END,version=version+1,updated_by=$4,updated_at=clock_timestamp() WHERE entity_id=$1 AND id=$2`, batch.BankID, item.cardID, batch.TargetStatus, batch.RequestedBy); err != nil {
 			return fmt.Errorf("apply batch card: %w", err)
 		}
 		if _, err = tx.Exec(ctx, `UPDATE bank.card_operations SET status='succeeded',executor_identity=$3,started_at=clock_timestamp(),completed_at=clock_timestamp(),updated_by=$4,updated_at=clock_timestamp() WHERE entity_id=$1 AND id=$2 AND status='queued'`, batch.BankID, item.operationID, owner, batch.RequestedBy); err != nil {
@@ -220,24 +229,31 @@ func (s *ExecutorStore) EnsureExpiryRun(ctx context.Context, bank string, day ti
 	if err != nil {
 		return err
 	}
-	rows, err := tx.Query(ctx, `SELECT id::text FROM bank.cards WHERE entity_id=$1 AND status IN ('pending','issued','active','suspended') AND expires_at IS NOT NULL AND expires_at < $2::date + INTERVAL '1 day' ORDER BY id FOR UPDATE`, bank, day.Format("2006-01-02"))
+	rows, err := tx.Query(ctx, `SELECT c.id::text FROM bank.cards c WHERE c.entity_id=$1 AND c.status IN ('pending','issued','active','suspended') AND c.expires_at IS NOT NULL AND c.expires_at < $2::date + INTERVAL '1 day' AND NOT EXISTS (SELECT FROM bank.card_expiry_run_items i WHERE i.entity_id=c.entity_id AND i.expiry_run_id=$3 AND i.card_id=c.id) ORDER BY c.id LIMIT $4 FOR UPDATE OF c SKIP LOCKED`, bank, day.Format("2006-01-02"), runID, expiryScheduleBatchSize)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	count := 0
+	cardIDs := make([]string, 0)
 	for rows.Next() {
-		var cardID, operationID string
+		var cardID string
 		if err = rows.Scan(&cardID); err != nil {
 			return err
 		}
-		var alreadyScheduled bool
-		if err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT FROM bank.card_expiry_run_items WHERE entity_id=$1 AND expiry_run_id=$2 AND card_id=$3)", bank, runID, cardID).Scan(&alreadyScheduled); err != nil {
+		cardIDs = append(cardIDs, cardID)
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+	if len(cardIDs) > 0 {
+		if _, err = tx.Exec(ctx, "UPDATE bank.card_expiry_runs SET status='processing',completed_at=NULL,updated_at=clock_timestamp() WHERE entity_id=$1 AND id=$2 AND status='completed'", bank, runID); err != nil {
 			return err
 		}
-		if alreadyScheduled {
-			continue
-		}
+	}
+	count := 0
+	for _, cardID := range cardIDs {
+		var operationID string
 		err = tx.QueryRow(ctx, `INSERT INTO bank.card_operations(entity_id,card_id,action,status,reason,actor_role,executor_identity,request_id,started_at,created_by,updated_by) VALUES ($1,$2,'expire','queued','scheduled expiry','system',$3,gen_random_uuid(),clock_timestamp(),NULL,NULL) RETURNING id::text`, bank, cardID, owner).Scan(&operationID)
 		if err != nil {
 			return err
@@ -246,9 +262,6 @@ func (s *ExecutorStore) EnsureExpiryRun(ctx context.Context, bank string, day ti
 			return err
 		}
 		count++
-	}
-	if err = rows.Err(); err != nil {
-		return err
 	}
 	if _, err = tx.Exec(ctx, "UPDATE bank.card_expiry_runs SET item_count=(SELECT count(*) FROM bank.card_expiry_run_items WHERE entity_id=$1 AND expiry_run_id=$2),updated_at=clock_timestamp() WHERE entity_id=$1 AND id=$2", bank, runID); err != nil {
 		return err
@@ -288,11 +301,11 @@ func (s *ExecutorStore) RecoverExpiryItems(ctx context.Context, claim executor.C
 	}
 	defer tx.Rollback(ctx)
 	rows, err := tx.Query(ctx, `WITH expired AS (
-		SELECT ctid FROM bank.card_expiry_run_items WHERE entity_id=$1 AND status='processing' AND lease_expires_at<=clock_timestamp() FOR UPDATE SKIP LOCKED)
+		SELECT id FROM bank.card_expiry_run_items WHERE entity_id=$1 AND status='processing' AND lease_expires_at<=clock_timestamp() FOR UPDATE SKIP LOCKED)
 		UPDATE bank.card_expiry_run_items i SET status=CASE WHEN i.automatic_retry_count>=3 THEN 'manual_retry_required' ELSE 'pending' END,
 		attempt_count=i.attempt_count+1,automatic_retry_count=i.automatic_retry_count+CASE WHEN i.automatic_retry_count>=3 THEN 0 ELSE 1 END,
-		lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=clock_timestamp(),failure_code='expiry_failed',updated_at=clock_timestamp()
-		FROM expired WHERE i.ctid=expired.ctid RETURNING i.expiry_run_id::text`, claim.BankID)
+		lease_owner=NULL,lease_expires_at=NULL,lease_version=lease_version+1,next_attempt_at=clock_timestamp(),failure_code='expiry_failed',updated_at=clock_timestamp()
+		FROM expired WHERE i.entity_id=$1 AND i.id=expired.id RETURNING i.expiry_run_id::text`, claim.BankID)
 	if err != nil {
 		return 0, fmt.Errorf("recover expiry leases: %w", err)
 	}

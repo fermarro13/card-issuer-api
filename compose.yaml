@@ -46,6 +46,9 @@ services:
       target: app
     environment:
       HTTP_ADDR: ":8080"
+      APP_ENV: development
+      CREDENTIAL_VAULT_MODE: memory
+      TEST_VAULT_KEY_B64: ${TEST_VAULT_KEY_B64:-QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI}
       PGHOST: postgres
       PGPORT: "5432"
       PGSSLMODE: disable
@@ -89,7 +92,7 @@ services:
       context: .
       target: executor
     environment:
-      EXECUTOR_ID: ${EXECUTOR_ID:?EXECUTOR_ID must be explicitly set for every executor replica}
+      EXECUTOR_ID: ${EXECUTOR_ID:-executor-dev-01}
       EXECUTOR_HTTP_ADDR: ":8090"
       EXECUTOR_CONTROL_DATABASE_URL: postgres://ci_app_executor:${EXECUTOR_DB_PASSWORD:-Dev-Executor-Runtime!2026}@postgres:5432/${CONTROL_DATABASE:-card_issuer_control}?sslmode=disable&connect_timeout=2
       EXECUTOR_SHARD_DATABASE_URL: postgres://ci_app_executor:${EXECUTOR_DB_PASSWORD:-Dev-Executor-Runtime!2026}@postgres:5432/${SHARD_DATABASE:-card_issuer_shard_01}?sslmode=disable&connect_timeout=2

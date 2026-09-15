@@ -24,6 +24,7 @@ import (
 	"card-issuer-api/internal/server"
 	"card-issuer-api/internal/staff"
 	"card-issuer-api/internal/tenant"
+	"card-issuer-api/internal/vault"
 )
 
 func main() {
@@ -76,7 +77,16 @@ func run(logger *slog.Logger) int {
 	authentication := auth.NewService(authrepository.New(authPool), signer)
 	banks := bank.New(controlrepository.NewBank(authPool), routingrepository.New(control), shardrepository.NewBank(shard), cfg.ShardID)
 	catalogService := catalog.New(shardrepository.NewCatalog(shard))
-	cardService := card.New(shardrepository.NewCard(shard))
+	if cfg.VaultMode != "memory" {
+		logger.Error("external credential vault provisioning is required")
+		return 1
+	}
+	credentialVault, err := vault.NewInMemory(cfg.Environment, cfg.TestVaultKey)
+	if err != nil {
+		logger.Error("credential vault initialization failed")
+		return 1
+	}
+	cardService := card.New(shardrepository.NewCard(shard), credentialVault)
 	batchService := batch.New(shardrepository.NewBatch(shard))
 	staffService := staff.New(controlrepository.NewStaff(authPool), routingrepository.New(control), cfg.ShardID)
 	bankAccess := tenant.New(routingrepository.New(control), cfg.ShardID)

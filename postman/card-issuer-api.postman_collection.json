@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "8ea3a2e9-34c4-4a41-bdd7-c6845df18fe6",
     "name": "Card Issuer API",
-    "description": "Colección para los endpoints implementados, incluida la Public Resource API. Configure base_url para el entorno objetivo. Las credenciales iniciales son exclusivamente las cuentas seed de desarrollo documentadas en database/TEST-CREDENTIALS.md.\n\nLos POST de autenticación no requieren Idempotency-Key. Login y refresh devuelven access_token; los scripts de prueba lo guardan en la variable de colección access_token. El refresh token nunca se devuelve en JSON: Postman debe conservar la cookie __Host-card-issuer-refresh de login. Para una API HTTP local, use el administrador de cookies de Postman o configure HTTPS, ya que la cookie es Secure.\n\nTodos los cambios de recursos requieren Idempotency-Key. Las solicitudes de esta colección usan {{$guid}} para generar una clave nueva en cada envío. Ejecute Login antes de Public Resource API y ejecute sus carpetas en orden para guardar los IDs creados.",
+    "description": "Colección para los endpoints implementados: salud, autenticación, recursos, batches de estado y verificación de autorización mTLS. Configure base_url y, si corresponde, authorization_base_url para el entorno objetivo. Las credenciales iniciales son exclusivamente las cuentas seed de desarrollo documentadas en database/TEST-CREDENTIALS.md.\n\nLos POST de autenticación no requieren Idempotency-Key. Login y refresh devuelven access_token; los scripts de prueba lo guardan en la variable de colección access_token. El refresh token nunca se devuelve en JSON: Postman debe conservar la cookie __Host-card-issuer-refresh de login. Para una API HTTP local, use el administrador de cookies de Postman o configure HTTPS, ya que la cookie es Secure.\n\nTodos los cambios de la Public Resource API requieren Idempotency-Key. Las solicitudes de esta colección usan {{$guid}} para generar una clave nueva en cada envío. Ejecute Login antes de Public Resource API y ejecute sus carpetas en orden para guardar los IDs creados. La verificación de autorización usa mTLS y el bank_transaction_reference como clave de replay; no usa bearer token ni Idempotency-Key.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -21,7 +21,12 @@
     { "key": "card_id", "value": "", "type": "string" },
     { "key": "replacement_card_id", "value": "", "type": "string" },
     { "key": "expiry_run_id", "value": "", "type": "string" },
-    { "key": "expiry_item_id", "value": "", "type": "string" }
+    { "key": "expiry_item_id", "value": "", "type": "string" },
+    { "key": "card_status_batch_id", "value": "", "type": "string" },
+    { "key": "authorization_base_url", "value": "https://localhost:8443", "type": "string" },
+    { "key": "bank_transaction_reference", "value": "postman-authorization-{{$guid}}", "type": "string" },
+    { "key": "authorization_pan", "value": "", "type": "string" },
+    { "key": "authorization_cvv", "value": "", "type": "string" }
   ],
   "item": [
     {
@@ -225,12 +230,12 @@
           "name": "Cards and operations",
           "item": [
             { "name": "List cards with filters", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/cards?client_id={{client_id}}&account_reference_id={{account_reference_id}}&product_id={{product_id}}&status=issued&page_size=50", "description": "Filtros exactos admitidos: client_id, account_reference_id, product_id y status. La respuesta es una colección cursor." } },
-            { "name": "Issue card", "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('issues a card', function () { pm.response.to.have.status(201); pm.collectionVariables.set('card_id', pm.response.json().card.id); });" ] } } ], "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"client_id\": \"{{client_id}}\",\n  \"account_reference_id\": \"{{account_reference_id}}\",\n  \"product_id\": \"{{product_id}}\",\n  \"reason\": \"Initial issue through Postman\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards", "description": "Devuelve resúmenes de card y operation. Nunca devuelve PAN, CVV, provider data ni credential_reference." } },
+            { "name": "Issue card", "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('issues a card', function () { pm.response.to.have.status(201); pm.collectionVariables.set('card_id', pm.response.json().card.id); });" ] } } ], "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"client_id\": \"{{client_id}}\",\n  \"account_reference_id\": \"{{account_reference_id}}\",\n  \"product_id\": \"{{product_id}}\",\n  \"reason\": \"Initial issue through Postman\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards", "description": "Issuer o bank_operator asignado. La respuesta inicial contiene credentials.pan y credentials.cvv transitorios; no se guardan automáticamente y no aparecen en un replay de idempotencia." } },
             { "name": "Get card", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}" } },
             { "name": "Activate card", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Activate through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}:activate" } },
             { "name": "Suspend card", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Suspend through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}:suspend" } },
             { "name": "Resume card", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Resume through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}:resume" } },
-            { "name": "Replace card", "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('replaces a card', function () { pm.response.to.have.status(201); pm.collectionVariables.set('replacement_card_id', pm.response.json().card.id); });" ] } } ], "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Replace through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}:replace", "description": "Solo issuer_operator y solo desde active o suspended. La sucesora conserva cliente, cuenta y producto." } },
+            { "name": "Replace card", "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('replaces a card', function () { pm.response.to.have.status(201); pm.collectionVariables.set('replacement_card_id', pm.response.json().card.id); });" ] } } ], "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Replace through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}:replace", "description": "Issuer o bank_operator asignado, y solo desde active o suspended. La sucesora conserva cliente, cuenta y producto; la respuesta inicial incluye credenciales transitorias." } },
             { "name": "Activate replacement", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Activate replacement through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{replacement_card_id}}:activate", "description": "La activación cierra atómicamente la tarjeta predecesora." } },
             { "name": "Card history", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}/history?page_size=50" } },
             { "name": "Card operations", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/cards/{{card_id}}/operations?page_size=50" } },
@@ -238,10 +243,64 @@
           ]
         },
         {
+          "name": "Card-status batches",
+          "description": "Issuer y bank_operator asignado pueden crear, ejecutar, cancelar y reintentar batches. Cree un draft, revíselo y ejecute el comando explícito. Las listas usan cursor y page_size (1-200).",
+          "item": [
+            { "name": "List batches", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/card-status-batches?page_size=50", "description": "Devuelve una colección cursor de batches visibles para el banco." } },
+            { "name": "Create draft", "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('creates a card-status batch draft', function () { pm.response.to.have.status(201); pm.collectionVariables.set('card_status_batch_id', pm.response.json().id); });" ] } } ], "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{\n  \"target_status\": \"suspended\",\n  \"reason\": \"Postman review batch\",\n  \"card_ids\": [\n    \"{{card_id}}\"\n  ]\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/card-status-batches", "description": "Crea un draft inmutable. target_status admite active, suspended o closed; card_ids debe contener entre 1 y 200 UUIDs únicos del banco." } },
+            { "name": "Get batch", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/card-status-batches/{{card_status_batch_id}}", "description": "Devuelve el batch, incluyendo links.execute." } },
+            { "name": "List batch items", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/banks/{{bank_id}}/card-status-batches/{{card_status_batch_id}}/items?page_size=50", "description": "Devuelve una colección cursor de ítems del batch." } },
+            { "name": "Execute batch", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/card-status-batches/{{card_status_batch_id}}:execute", "description": "Despacha un draft y devuelve 202 con estado queued. El executor procesa el batch de forma asíncrona." } },
+            { "name": "Cancel batch", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/card-status-batches/{{card_status_batch_id}}:cancel", "description": "Cancela únicamente batches draft o queued sin lease de procesamiento; devuelve 200." } },
+            { "name": "Retry terminal batch", "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('creates a retry draft', function () { pm.response.to.have.status(201); pm.collectionVariables.set('card_status_batch_id', pm.response.json().id); });" ] } } ], "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/card-status-batches/{{card_status_batch_id}}:retry", "description": "Solo failed o cancelled. Crea un nuevo draft enlazado, guarda su ID y exige una ejecución posterior." } }
+          ]
+        },
+        {
           "name": "Expiry retry",
           "item": [
             { "name": "Retry expiry item", "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" } ], "body": { "mode": "raw", "raw": "{ \"reason\": \"Manual retry through Postman\" }", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/banks/{{bank_id}}/card-expiry-runs/{{expiry_run_id}}/items/{{expiry_item_id}}:retry", "description": "Solo issuer_operator. Reintenta manualmente un ítem elegible y devuelve 202 con el estado pending." } }
           ]
+        }
+      ]
+    },
+    {
+      "name": "Authorization verification (mTLS)",
+      "description": "Servicio independiente de verificación de credenciales, no expuesto por la Public Resource API. Antes de enviarlo, configure en Postman un certificado cliente válido, su clave privada y la CA del servicio para authorization_base_url. La identidad del banco se deriva exclusivamente del certificado cliente; no agregue un bank_id al cuerpo. Este request contiene datos de tarjeta transitorios: copie pan/cvv de la respuesta inicial de Issue card únicamente en un entorno de prueba y limpie las variables authorization_pan y authorization_cvv después de usarlo.",
+      "item": [
+        {
+          "name": "Verify credentials",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns a safe authorization decision', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var body = pm.response.json();",
+                  "    pm.expect(body.bank_transaction_reference).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.decision_id).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.decision).to.be.oneOf(['approved', 'declined']);",
+                  "    pm.expect(body).not.to.have.property('pan');",
+                  "    pm.expect(body).not.to.have.property('cvv');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bank_transaction_reference\": \"{{bank_transaction_reference}}\",\n  \"pan\": \"{{authorization_pan}}\",\n  \"cvv\": \"{{authorization_cvv}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{authorization_base_url}}/v1/authorization-verifications",
+            "description": "Requiere TLS 1.3 mutuo y no usa bearer token ni Idempotency-Key. bank_transaction_reference debe ser no vacío y tener como máximo 256 caracteres; pan debe tener 13-19 dígitos y cvv 3-4 dígitos. Repetir la misma referencia devuelve la decisión segura original sin volver a verificar credenciales. La respuesta solo contiene bank_transaction_reference, decision_id y decision (approved o declined)."
+          }
         }
       ]
     }

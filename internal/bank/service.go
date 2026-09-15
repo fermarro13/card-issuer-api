@@ -205,7 +205,16 @@ func (s *Service) entity(ctx context.Context, id string) (json.RawMessage, error
 	if err != nil {
 		return nil, err
 	}
-	raw, err := json.Marshal(entity)
+	// PostgreSQL jsonb replays object keys in length-then-lexical order. Keep
+	// the first HTTP response in that same stable order.
+	raw, err := json.Marshal(struct {
+		ID            string    `json:"id"`
+		Name          string    `json:"name"`
+		Status        string    `json:"status"`
+		CreatedAt     time.Time `json:"created_at"`
+		UpdatedAt     time.Time `json:"updated_at"`
+		BankReference string    `json:"bank_reference"`
+	}{entity.ID, entity.Name, entity.Status, entity.CreatedAt, entity.UpdatedAt, entity.BankReference})
 	return raw, err
 }
 
