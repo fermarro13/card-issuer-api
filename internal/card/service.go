@@ -134,7 +134,7 @@ func (s *Service) CardCommandWorkflow(ctx context.Context, principal auth.Princi
 	if action == "replace" {
 		return s.replace(ctx, tx, principal, bank, id, scope, key, reason, requestID, state)
 	}
-	target, valid, ignored := transition(state.Status, action)
+	target, valid, ignored := domain.Transition(state.Status, action)
 	if !valid {
 		return nil, 0, problem(statusUnprocessable, "invalid_card_transition", "The requested card transition is not allowed.")
 	}
@@ -244,24 +244,6 @@ func (s *Service) claim(ctx context.Context, tx Transaction, bank, scope, key st
 		return nil, 0, false, problem(statusConflict, "idempotency_conflict", "Idempotency-Key was previously used for a different request.")
 	}
 	return replay.Response, replay.Status, replay.Found, err
-}
-
-func transition(current, action string) (string, bool, bool) {
-	target := map[string]string{"activate": "active", "suspend": "suspended", "resume": "active", "close": "closed"}[action]
-	if current == target {
-		return target, true, true
-	}
-	switch action {
-	case "activate":
-		return target, current == "issued", false
-	case "suspend":
-		return target, current == "active", false
-	case "resume":
-		return target, current == "suspended", false
-	case "close":
-		return target, current == "issued" || current == "active" || current == "suspended", false
-	}
-	return "", false, false
 }
 
 func actorEntityID(principal auth.Principal) string {

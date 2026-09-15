@@ -109,6 +109,8 @@ type CardStatusBatch struct {
 	ItemCount      int        `json:"item_count"`
 	AppliedCount   int        `json:"applied_count"`
 	IgnoredCount   int        `json:"ignored_count"`
+	FailureCode    *string    `json:"failure_code,omitempty"`
+	FailureSummary *string    `json:"failure_summary,omitempty"`
 	RetryOfBatchID *string    `json:"retry_of_batch_id"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`

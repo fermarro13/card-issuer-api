@@ -9,7 +9,7 @@ $compose=@('compose','--project-name',$project,'--project-directory',$root,'--en
 $savedEnvironment=@{}
 $settings=@{
     APP_PORT="$AppPort"; CONTROL_DATABASE='card_issuer_control'; SHARD_DATABASE='card_issuer_shard_01'; SHARD_ID='shard_01'
-    POSTGRES_PASSWORD='Dev-Postgres-Admin!2026'; CONTROL_DB_PASSWORD='Dev-Control-Reader!2026'; AUTH_DB_PASSWORD='Dev-Auth-Runtime!2026'; SHARD_DB_PASSWORD='Dev-Shard-Runtime!2026'
+    POSTGRES_PASSWORD='Dev-Postgres-Admin!2026'; CONTROL_DB_PASSWORD='Dev-Control-Reader!2026'; AUTH_DB_PASSWORD='Dev-Auth-Runtime!2026'; SHARD_DB_PASSWORD='Dev-Shard-Runtime!2026'; EXECUTOR_DB_PASSWORD='Dev-Executor-Runtime!2026'; EXECUTOR_ID='executor-smoke-01'
     AUTH_JWT_PRIVATE_KEY_B64='nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2DXWpgBgrEKt9VL/tPJZAc6DuFy89qmIyWvAhpo9wdRGg'; AUTH_JWT_ISSUER='card-issuer-api'; AUTH_JWT_AUDIENCE='card-issuer-api'
 }
 
@@ -44,12 +44,14 @@ try {
     Wait-HTTP '/health/live' 200
     Wait-HTTP '/health/ready' 200
     Assert ((Query 'card_issuer_control' 'SELECT count(*) FROM control.users;') -eq '4') 'Expected four staff accounts.'
-    Assert ((Query 'card_issuer_control' 'SELECT count(*) FROM ci_meta.schema_migrations;') -eq '1') 'Control migration missing.'
-    Assert ((Query 'card_issuer_shard_01' 'SELECT count(*) FROM ci_meta.schema_migrations;') -eq '1') 'Shard migration missing.'
+    Assert ((Query 'card_issuer_control' 'SELECT count(*) FROM ci_meta.schema_migrations;') -eq '3') 'Control migrations missing.'
+    Assert ((Query 'card_issuer_shard_01' 'SELECT count(*) FROM ci_meta.schema_migrations;') -eq '4') 'Shard migrations missing.'
     $appID=(Invoke-Compose -Arguments @('ps','-q','app')).Trim()
     $user=& docker inspect --format '{{.Config.User}}' $appID
     Assert ($LASTEXITCODE -eq 0 -and $user -eq '10001:10001') 'Application must run as non-root.'
-    Assert ((Query 'postgres' "SELECT count(*) FROM pg_roles WHERE rolname IN ('ci_app_control','ci_app_auth','ci_app_shard') AND NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication);") -eq '3') 'Runtime privilege attributes are incorrect.'
+    $executorID=(Invoke-Compose -Arguments @('ps','-q','executor')).Trim()
+    Assert ((& docker inspect --format '{{.Config.User}}' $executorID) -eq '10001:10001') 'Executor must run as non-root.'
+    Assert ((Query 'postgres' "SELECT count(*) FROM pg_roles WHERE rolname IN ('ci_app_control','ci_app_auth','ci_app_shard','ci_app_executor') AND NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication);") -eq '4') 'Runtime privilege attributes are incorrect.'
 
     Write-Host 'Checking retained data and passwords through down/up...'
     Query 'card_issuer_control' "UPDATE control.users SET password_hash=password_hash||'changed' WHERE normalized_username='bank_operator';" | Out-Null

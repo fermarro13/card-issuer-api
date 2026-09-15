@@ -85,6 +85,7 @@ The test seeds have their own per-database transaction locks. A committed bank w
 | `ci_auth_runtime` | Control users/sessions/tokens: SELECT/INSERT/UPDATE; authentication audit: SELECT/INSERT; directory: SELECT. |
 | `ci_routing_reader` | Control directory SELECT only. |
 | `ci_business_runtime` | Shard tables: SELECT/INSERT/UPDATE, except audit/history are SELECT/INSERT only. No DELETE/TRUNCATE. |
+| `ci_executor_runtime` | Control directory reads plus the narrow shard claim, fenced-result, expiry-run/item, card-operation/history, and audit grants required by `cmd/executor`. No auth/session/idempotency/reference-data or DDL access. |
 
 Runtime groups cannot read migration metadata, create schema objects, assume ownership, or bypass RLS. Public database/schema access and helper-function execution are restricted. Only the tenant-context function is callable by business runtime; internal guards run as triggers.
 

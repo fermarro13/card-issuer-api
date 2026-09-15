@@ -76,6 +76,7 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 	t.Setenv("CONTROL_DB_PASSWORD", "test-control ' $ & @ / : password")
 	t.Setenv("AUTH_DB_PASSWORD", "test-auth ' $ & @ / : password")
 	t.Setenv("SHARD_DB_PASSWORD", "test-shard ' $ & @ / : password")
+	t.Setenv("EXECUTOR_DB_PASSWORD", "test-executor ' $ & @ / : password")
 	initialize := func() (string, error) {
 		cmd := exec.Command("pwsh", "-NoProfile", "-File", filepath.Join(root, "database", "Initialize-Compose.ps1"), "-Psql", psql)
 		out, err := cmd.CombinedOutput()
@@ -131,6 +132,16 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer shard.Close()
+	executorControl, err := database.Open(ctx, urlFor("ci_app_executor", os.Getenv("EXECUTOR_DB_PASSWORD"), controlDB))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer executorControl.Close()
+	executorShard, err := database.Open(ctx, urlFor("ci_app_executor", os.Getenv("EXECUTOR_DB_PASSWORD"), shardDB))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer executorShard.Close()
 	t.Run("runtime_logins_and_restrictions", func(t *testing.T) {
 		for _, query := range []string{"SET ROLE ci_owner", "SELECT * FROM control.users", "SELECT * FROM ci_meta.schema_migrations", "CREATE ROLE forbidden_role"} {
 			if _, err := control.Exec(ctx, query); err == nil {
@@ -158,6 +169,25 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 		defer cancel()
 		if err := other.Ping(checkCtx); err == nil {
 			t.Fatal("shard login accessed the control database")
+		}
+		if err := executorControl.QueryRow(ctx, "SELECT count(*) FROM control.bank_routing_entries").Scan(&count); err != nil || count != 1 {
+			t.Fatal("executor cannot read routing")
+		}
+		if _, err := controlrepository.New(executorControl).User(ctx, "20000000-0000-4000-8000-000000000001"); err != nil {
+			t.Fatalf("executor cannot use the approved directory user lookup: %v", err)
+		}
+		for _, query := range []string{"SELECT password_hash FROM control.users", "SELECT * FROM control.auth_sessions", "UPDATE control.users SET status='disabled'"} {
+			if _, err := executorControl.Exec(ctx, query); err == nil {
+				t.Fatalf("executor control login accepted forbidden statement: %s", query)
+			}
+		}
+		if _, err := executorShard.Exec(ctx, "BEGIN; SELECT set_config('app.entity_id','10000000-0000-4000-8000-000000000001',true); SELECT count(*) FROM bank.cards; ROLLBACK;"); err != nil {
+			t.Fatal("executor cannot establish tenant context")
+		}
+		for _, query := range []string{"SET ROLE ci_owner", "DELETE FROM bank.cards", "SELECT * FROM bank.idempotency_records"} {
+			if _, err := executorShard.Exec(ctx, query); err == nil {
+				t.Fatalf("executor shard login accepted forbidden statement: %s", query)
+			}
 		}
 	})
 	t.Run("authentication_sessions_and_audits", func(t *testing.T) {

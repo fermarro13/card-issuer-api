@@ -1,5 +1,19 @@
 # Development Log
 
+## 2026-09-14 — BATCH-EXECUTOR-001: Batch executor
+
+- User · Scope: Implement the remaining independently deployable executor daemon from the card-issuer architecture, including batch dispatch, lease recovery, daily expiry, and separate container deployment.
+- User · Decisions: Dedicated least-privilege executor database account; explicit unique executor identity; bounded transient retries; required tuning configuration; internal-only operational interface; current-date-only UTC expiry catch-up; per-bank round-robin; all nonterminal due cards; allow-listed failure code plus curated generic summary.
+- User · Plan persistence: Withdraw the earlier no-persistence exception for this feature.
+- Orchestrator · Plan: [Batch Executor](docs/plans/2026-09-14-batch-executor.md), updated for the committed `internal/domain` and feature-specific service/port refactor.
+- Architect · Gate: APPROVED. Required boundaries: append-only least-privilege executor migrations; consumer-owned ports with no HTTP/internal-resource dependency; per-claim lease-version fencing on every guarded completion, requeue, recovery, and expiry-item write; one all-or-nothing shard transaction for each public batch; live user/role/assignment/route revalidation before each attempt; and a separately configured, hardened, internal-only executor runtime. Control unavailability is retryable without card writes; authorization loss is terminal without card writes.
+- Orchestrator · Status: Architect gate recorded; implementation in progress.
+- Implementation · Delivered: separate `cmd/executor` daemon, executor-owned ports/shard adapter, shared domain lifecycle validation, fenced batch and expiry claims/recovery/results, live directory/routing authorization, expiry scheduling, sanitized diagnostics/metrics, dedicated least-privilege runtime role, append-only migrations, hardened internal Compose service, and verification coverage.
+- Automated tests · PASSED: Go 1.27.1; focused executor tests, `go test -count=1 ./...`, `go vet ./...`, database-harness unit/skip verification, `docker compose --env-file .env.example config --quiet`, and `git diff --check`.
+- Automated tests · BLOCKED: `go test -race ./...` cannot run on this host: CGO is disabled by default, and with `CGO_ENABLED=1` Go reports that `gcc` is absent. PostgreSQL/Docker executor integration acceptance cannot run without a working Docker/PostgreSQL environment.
+- QA and Security · PENDING: both independent reviewers identified concrete issues, which were addressed and re-tested; their final approval turns could not complete because the review-agent sessions exhausted their tool budget. No approval is inferred.
+- Orchestrator · Status: Implementation delivered; feature closeout remains blocked on the required race, PostgreSQL/Compose acceptance, and final QA/security gates.
+
 ## 2026-09-14 — CARD-STATUS-BATCH-API-001: Card-status batch API
 
 - User · Scope: Implement the remaining public API endpoints described in the card-issuer architecture.

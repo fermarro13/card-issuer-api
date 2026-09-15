@@ -35,6 +35,8 @@ compose() {
     CONTROL_DB_PASSWORD='Dev-Control-Reader!2026' \
     AUTH_DB_PASSWORD='Dev-Auth-Runtime!2026' \
     SHARD_DB_PASSWORD='Dev-Shard-Runtime!2026' \
+    EXECUTOR_DB_PASSWORD='Dev-Executor-Runtime!2026' \
+    EXECUTOR_ID='executor-smoke-01' \
     AUTH_JWT_PRIVATE_KEY_B64='nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2DXWpgBgrEKt9VL/tPJZAc6DuFy89qmIyWvAhpo9wdRGg' \
     AUTH_JWT_ISSUER='card-issuer-api' \
     AUTH_JWT_AUDIENCE='card-issuer-api' \
@@ -73,12 +75,15 @@ compose up --build -d >/dev/null
 wait_http /health/live 200
 wait_http /health/ready 200
 assert_equal "$(query card_issuer_control 'SELECT count(*) FROM control.users;')" 4 'Expected four staff accounts.'
-assert_equal "$(query card_issuer_control 'SELECT count(*) FROM ci_meta.schema_migrations;')" 1 'Control migration missing.'
-assert_equal "$(query card_issuer_shard_01 'SELECT count(*) FROM ci_meta.schema_migrations;')" 1 'Shard migration missing.'
+assert_equal "$(query card_issuer_control 'SELECT count(*) FROM ci_meta.schema_migrations;')" 3 'Control migrations missing.'
+assert_equal "$(query card_issuer_shard_01 'SELECT count(*) FROM ci_meta.schema_migrations;')" 4 'Shard migrations missing.'
 app_id=$(compose ps -q app | tr -d '\r\n')
 app_user=$(docker inspect --format '{{.Config.User}}' "$app_id")
 assert_equal "$app_user" '10001:10001' 'Application must run as non-root.'
-assert_equal "$(query postgres "SELECT count(*) FROM pg_roles WHERE rolname IN ('ci_app_control','ci_app_auth','ci_app_shard') AND NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication);")" 3 'Runtime privilege attributes are incorrect.'
+executor_id=$(compose ps -q executor | tr -d '\r\n')
+executor_user=$(docker inspect --format '{{.Config.User}}' "$executor_id")
+assert_equal "$executor_user" '10001:10001' 'Executor must run as non-root.'
+assert_equal "$(query postgres "SELECT count(*) FROM pg_roles WHERE rolname IN ('ci_app_control','ci_app_auth','ci_app_shard','ci_app_executor') AND NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication);")" 4 'Runtime privilege attributes are incorrect.'
 
 printf '%s\n' 'Checking retained data and passwords through down/up...'
 query card_issuer_control "UPDATE control.users SET password_hash=password_hash||'changed' WHERE normalized_username='bank_operator';" >/dev/null

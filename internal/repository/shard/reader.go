@@ -138,7 +138,7 @@ func (r *Reader) CardStatusBatches(ctx context.Context, bank string) ([]domain.C
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, "SELECT id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,retry_of_batch_id::text,created_at,updated_at,completed_at FROM bank.card_status_batches WHERE entity_id=$1 ORDER BY created_at DESC,id DESC", bank)
+	rows, err := tx.Query(ctx, "SELECT id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,failure_code,failure_summary,retry_of_batch_id::text,created_at,updated_at,completed_at FROM bank.card_status_batches WHERE entity_id=$1 ORDER BY created_at DESC,id DESC", bank)
 	if err != nil {
 		return nil, fmt.Errorf("list card status batches: %w", err)
 	}
@@ -166,7 +166,7 @@ func (r *Reader) CardStatusBatch(ctx context.Context, bank, id string) (domain.C
 		return domain.CardStatusBatch{}, err
 	}
 	defer tx.Rollback(ctx)
-	batch, err := scanCardStatusBatch(tx.QueryRow(ctx, "SELECT id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,retry_of_batch_id::text,created_at,updated_at,completed_at FROM bank.card_status_batches WHERE entity_id=$1 AND id=$2", bank, id))
+	batch, err := scanCardStatusBatch(tx.QueryRow(ctx, "SELECT id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,failure_code,failure_summary,retry_of_batch_id::text,created_at,updated_at,completed_at FROM bank.card_status_batches WHERE entity_id=$1 AND id=$2", bank, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.CardStatusBatch{}, domain.ErrNotFound
 	}
@@ -408,6 +408,8 @@ func scanCardStatusBatch(row cardRow) (domain.CardStatusBatch, error) {
 		&batch.ItemCount,
 		&batch.AppliedCount,
 		&batch.IgnoredCount,
+		&batch.FailureCode,
+		&batch.FailureSummary,
 		&batch.RetryOfBatchID,
 		&batch.CreatedAt,
 		&batch.UpdatedAt,
@@ -650,7 +652,7 @@ func (t transaction) CardsExist(ctx context.Context, bank string, cardIDs []stri
 }
 
 func (t transaction) CreateCardStatusBatchDraft(ctx context.Context, bank string, input domain.CardStatusBatchDraft) (domain.CardStatusBatch, []domain.CardStatusBatchItem, error) {
-	batch, err := scanCardStatusBatch(t.tx.QueryRow(ctx, "INSERT INTO bank.card_status_batches(entity_id,id,target_status,reason,requested_by,requester_role,requester_entity_id,request_id,idempotency_record_id,item_count,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$5,$5) RETURNING id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,retry_of_batch_id::text,created_at,updated_at,completed_at", bank, input.ID, input.TargetStatus, input.Reason, input.ActorID, input.ActorRole, nullable(input.ActorEntityID), input.RequestID, input.IdempotencyRecordID, len(input.CardIDs)))
+	batch, err := scanCardStatusBatch(t.tx.QueryRow(ctx, "INSERT INTO bank.card_status_batches(entity_id,id,target_status,reason,requested_by,requester_role,requester_entity_id,request_id,idempotency_record_id,item_count,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$5,$5) RETURNING id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,failure_code,failure_summary,retry_of_batch_id::text,created_at,updated_at,completed_at", bank, input.ID, input.TargetStatus, input.Reason, input.ActorID, input.ActorRole, nullable(input.ActorEntityID), input.RequestID, input.IdempotencyRecordID, len(input.CardIDs)))
 	if err != nil {
 		return domain.CardStatusBatch{}, nil, err
 	}
@@ -669,7 +671,7 @@ func (t transaction) CreateCardStatusBatchDraft(ctx context.Context, bank string
 }
 
 func (t transaction) LockCardStatusBatch(ctx context.Context, bank, id string) (domain.CardStatusBatch, error) {
-	batch, err := scanCardStatusBatch(t.tx.QueryRow(ctx, "SELECT id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,retry_of_batch_id::text,created_at,updated_at,completed_at FROM bank.card_status_batches WHERE entity_id=$1 AND id=$2 FOR UPDATE", bank, id))
+	batch, err := scanCardStatusBatch(t.tx.QueryRow(ctx, "SELECT id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,failure_code,failure_summary,retry_of_batch_id::text,created_at,updated_at,completed_at FROM bank.card_status_batches WHERE entity_id=$1 AND id=$2 FOR UPDATE", bank, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.CardStatusBatch{}, domain.ErrNotFound
 	}
@@ -681,7 +683,7 @@ func (t transaction) ExecuteCardStatusBatch(ctx context.Context, bank, id, actor
 	if err != nil || batch.Status != "draft" {
 		return batch, err
 	}
-	batch, err = scanCardStatusBatch(t.tx.QueryRow(ctx, "UPDATE bank.card_status_batches SET status='queued',next_attempt_at=clock_timestamp(),updated_by=$3 WHERE entity_id=$1 AND id=$2 RETURNING id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,retry_of_batch_id::text,created_at,updated_at,completed_at", bank, id, actor))
+	batch, err = scanCardStatusBatch(t.tx.QueryRow(ctx, "UPDATE bank.card_status_batches SET status='queued',next_attempt_at=clock_timestamp(),updated_by=$3 WHERE entity_id=$1 AND id=$2 RETURNING id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,failure_code,failure_summary,retry_of_batch_id::text,created_at,updated_at,completed_at", bank, id, actor))
 	if err != nil {
 		return domain.CardStatusBatch{}, err
 	}
@@ -699,7 +701,7 @@ func (t transaction) CancelCardStatusBatch(ctx context.Context, bank, id, actor,
 	if batch.Status != "draft" && batch.Status != "queued" {
 		return domain.CardStatusBatch{}, domain.ErrBatchNotCancellable
 	}
-	batch, err = scanCardStatusBatch(t.tx.QueryRow(ctx, "UPDATE bank.card_status_batches SET status='cancelled',completed_at=clock_timestamp(),updated_by=$3 WHERE entity_id=$1 AND id=$2 RETURNING id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,retry_of_batch_id::text,created_at,updated_at,completed_at", bank, id, actor))
+	batch, err = scanCardStatusBatch(t.tx.QueryRow(ctx, "UPDATE bank.card_status_batches SET status='cancelled',completed_at=clock_timestamp(),updated_by=$3 WHERE entity_id=$1 AND id=$2 RETURNING id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,failure_code,failure_summary,retry_of_batch_id::text,created_at,updated_at,completed_at", bank, id, actor))
 	if err != nil {
 		return domain.CardStatusBatch{}, err
 	}
@@ -737,7 +739,7 @@ func (t transaction) RetryCardStatusBatch(ctx context.Context, bank, sourceID st
 	if len(cardIDs) != source.ItemCount || len(input.OperationIDs) != source.ItemCount {
 		return domain.CardStatusBatch{}, nil, fmt.Errorf("batch membership does not match its item count")
 	}
-	batch, err := scanCardStatusBatch(t.tx.QueryRow(ctx, "INSERT INTO bank.card_status_batches(entity_id,id,target_status,reason,requested_by,requester_role,requester_entity_id,request_id,idempotency_record_id,item_count,retry_of_batch_id,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$5,$5) RETURNING id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,retry_of_batch_id::text,created_at,updated_at,completed_at", bank, input.ID, source.TargetStatus, source.Reason, input.ActorID, input.ActorRole, nullable(input.ActorEntityID), input.RequestID, input.IdempotencyRecordID, source.ItemCount, sourceID))
+	batch, err := scanCardStatusBatch(t.tx.QueryRow(ctx, "INSERT INTO bank.card_status_batches(entity_id,id,target_status,reason,requested_by,requester_role,requester_entity_id,request_id,idempotency_record_id,item_count,retry_of_batch_id,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$5,$5) RETURNING id::text,target_status::text,reason,requested_by::text,requester_role,status::text,item_count,applied_count,ignored_count,failure_code,failure_summary,retry_of_batch_id::text,created_at,updated_at,completed_at", bank, input.ID, source.TargetStatus, source.Reason, input.ActorID, input.ActorRole, nullable(input.ActorEntityID), input.RequestID, input.IdempotencyRecordID, source.ItemCount, sourceID))
 	if err != nil {
 		return domain.CardStatusBatch{}, nil, err
 	}

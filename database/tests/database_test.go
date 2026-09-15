@@ -208,7 +208,7 @@ func TestDatabaseIntegration(t *testing.T) {
 		h.equal(h.control, "SELECT count(*) FROM control.auth_sessions;", "0")
 		h.equal(h.shard, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON c.relnamespace=n.oid WHERE n.nspname='bank' AND c.relkind='r' AND c.relrowsecurity AND c.relforcerowsecurity;", "14")
 		h.equal(h.control, "SELECT count(*) FROM pg_tables WHERE schemaname='control';", "6")
-		h.equal(h.control, "SELECT count(*) FROM pg_roles WHERE rolname IN ('ci_owner','ci_auth_runtime','ci_routing_reader','ci_business_runtime') AND NOT (rolcanlogin OR rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb);", "4")
+		h.equal(h.control, "SELECT count(*) FROM pg_roles WHERE rolname IN ('ci_owner','ci_auth_runtime','ci_routing_reader','ci_business_runtime','ci_executor_runtime') AND NOT (rolcanlogin OR rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb);", "5")
 	})
 	t.Run("seed_replay_preserves_changes", func(t *testing.T) {
 		h := h
@@ -248,8 +248,8 @@ func TestDatabaseIntegration(t *testing.T) {
 			}()
 		}
 		wg.Wait()
-		h.equal(h.control, "SELECT count(*) FROM ci_meta.schema_migrations;", "2")
-		h.equal(h.shard, "SELECT count(*) FROM ci_meta.schema_migrations;", "2")
+		h.equal(h.control, "SELECT count(*) FROM ci_meta.schema_migrations;", "3")
+		h.equal(h.shard, "SELECT count(*) FROM ci_meta.schema_migrations;", "4")
 	})
 	t.Run("migration_checksums_and_rollback", func(t *testing.T) {
 		h := h
@@ -259,7 +259,7 @@ func TestDatabaseIntegration(t *testing.T) {
 			if err := os.Mkdir(filepath.Join(root, kind), 0700); err != nil {
 				t.Fatal(err)
 			}
-			for _, name := range []string{"001_initial.sql", "002_public_resource_api.sql"} {
+			for _, name := range []string{"001_initial.sql", "002_public_resource_api.sql", "004_executor_runtime.sql"} {
 				data := read(t, "../migrations/"+kind+"/"+name)
 				if err := os.WriteFile(filepath.Join(root, kind, name), []byte(data), 0600); err != nil {
 					t.Fatal(err)
@@ -284,7 +284,7 @@ func TestDatabaseIntegration(t *testing.T) {
 			t.Fatal("failing migration accepted")
 		}
 		h.equal(h.control, "SELECT to_regclass('control.must_rollback') IS NULL;", "t")
-		h.equal(h.control, "SELECT count(*) FROM ci_meta.schema_migrations;", "2")
+		h.equal(h.control, "SELECT count(*) FROM ci_meta.schema_migrations;", "3")
 	})
 	t.Run("interrupted_seed_and_collision", func(t *testing.T) {
 		h := h

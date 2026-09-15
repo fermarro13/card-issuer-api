@@ -3,3 +3,4 @@ database/tests/.test-output/
 .env
 .env.*
 !.env.example
+.gocache-qa*

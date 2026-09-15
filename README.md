@@ -18,7 +18,8 @@ The API is available at [http://localhost:8080/health/live](http://localhost:808
 | --- | --- |
 | `postgres` | PostgreSQL 17.11 with a named persistent volume and two databases. |
 | `db-init` | Runs portable shell-based schema migrations and test seeds, provisions restricted connection accounts, verifies their credentials, then exits successfully. |
-| `app` | Go 1.27.1 server running as non-root with separate control/shard pools. |
+| `app` | Go 1.27.1 API server running as non-root with separate control/shard pools. |
+| `executor` | Independently deployable Go 1.27.1 batch/expiry daemon with internal-only operational endpoints. |
 
 Compose waits for healthy PostgreSQL and successful initialization before starting the app. `db-init` showing **Exited (0)** is expected. PostgreSQL is reachable only on the Compose network; the API is published at `127.0.0.1:8080`.
 
@@ -49,10 +50,11 @@ The following deliberately public database defaults support local POC startup:
 | `ci_app_control` | `Dev-Control-Reader!2026` | `ci_routing_reader` membership; control directory reads. |
 | `ci_app_auth` | `Dev-Auth-Runtime!2026` | `ci_auth_runtime` membership; staff authentication only. |
 | `ci_app_shard` | `Dev-Shard-Runtime!2026` | `ci_business_runtime` membership; tenant-scoped shard access. |
+| `ci_app_executor` | `Dev-Executor-Runtime!2026` | `ci_executor_runtime` membership; batch/expiry execution only. |
 
 The app receives three separate runtime passwords. Runtime accounts have no ownership, role/database creation, superuser, replication or RLS bypass privileges.
 
-Copy `.env.example` to `.env` only when you want to override the API port, database names, shard ID, technical passwords, or the POC JWT key. `.env` is ignored by Git and excluded from image builds. Set a unique `AUTH_JWT_PRIVATE_KEY_B64` from secret configuration in every production deployment; never use the committed POC key.
+Copy `.env.example` to `.env` only when you want to override the API port, database names, shard ID, technical passwords, executor tuning, or the POC JWT key. `.env` is ignored by Git and excluded from image builds. Every executor replica needs an explicit, unique `EXECUTOR_ID`; Compose refuses to start it without one. Set a unique `AUTH_JWT_PRIVATE_KEY_B64` from secret configuration in every production deployment; never use the committed POC key.
 
 **Existing volumes retain passwords.** Changing `POSTGRES_PASSWORD` in `.env` does not change an initialized PostgreSQL administrator password. Runtime account provisioning also preserves existing technical passwords and verifies the supplied credentials; a mismatch fails initialization. To change a password while preserving data, use an authenticated administrator session and psql's `\password account_name`, then update `.env` to match. Application staff passwords are likewise never reset by seeds.
 
@@ -69,6 +71,7 @@ docker compose down
 
 # Rebuild/recreate the app after code changes.
 docker compose up --build -d app
+docker compose up --build -d executor
 
 # Open an administrative SQL session inside PostgreSQL.
 docker compose exec postgres psql -U postgres -d card_issuer_control
@@ -124,3 +127,7 @@ docker compose --profile functional run --rm functional-tests
 ```
 
 The `functional` profile is not started by ordinary `docker compose up`.
+
+## Executor operations
+
+The executor never exposes business routes or communicates with the API process. Its Compose port remains on the internal network. It serves `GET /health/live`, `GET /health/ready`, and Prometheus `GET /metrics`; readiness checks the control and shard pools. Its configuration is independent of API authentication: `EXECUTOR_ID`, `EXECUTOR_HTTP_ADDR`, control/shard database URLs, shard ID, polling/concurrency/lease values, batch retry/backoff/size limits, expiry backoff, and drain timeout are all required outside Compose's development wiring.
