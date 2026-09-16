@@ -1,0 +1,244 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Card Issuer API Runtime Architecture",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1380, 730],
+    "repository": {
+      "url": "https://github.com/fermarro13/card-issuer-api.git",
+      "provider": "github",
+      "revision": "4696989d121ed32749ff26a153965c570b8a3a5e"
+    },
+    "views": [
+      {
+        "id": "public-request",
+        "label": "Primary public request",
+        "focus": ["operators", "api", "control", "shard"],
+        "note": "A staff request is authenticated, routed through the control database, and handled against the tenant shard."
+      },
+      {
+        "id": "batch-runtime",
+        "label": "Batch execution",
+        "focus": ["executor", "control", "shard"],
+        "note": "The executor independently reads routing and authorization state before claiming and applying shard work."
+      },
+      {
+        "id": "bank-verification",
+        "label": "Bank verification boundary",
+        "focus": ["bank", "authorization", "vault", "shard"],
+        "note": "The mTLS service verifies credentials without persisting PAN or CVV, then records a safe decision in the shard."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "operators",
+      "type": "external",
+      "label": "Issuer & Bank Staff",
+      "sublabel": "REST clients",
+      "pos": [50, 330],
+      "size": [160, 76],
+      "sources": [{ "path": "README.md", "line": 3, "label": "public API" }]
+    },
+    {
+      "id": "bank",
+      "type": "external",
+      "label": "Bank Authorization Caller",
+      "sublabel": "mTLS client",
+      "pos": [50, 600],
+      "size": [160, 76],
+      "sources": [{ "path": "internal/authorizationhttp/handler.go", "line": 31, "label": "bank endpoint" }]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Public API",
+      "sublabel": "Go HTTP server :8080",
+      "tag": "Published on loopback",
+      "pos": [270, 330],
+      "size": [180, 82],
+      "sources": [{ "path": "cmd/api/main.go", "line": 71, "end_line": 101, "label": "API assembly" }]
+    },
+    {
+      "id": "auth",
+      "type": "security",
+      "label": "Auth & Access Control",
+      "sublabel": "JWT, sessions, tenant checks",
+      "pos": [500, 332],
+      "size": [190, 78],
+      "sources": [{ "path": "cmd/api/main.go", "line": 77, "end_line": 93, "label": "auth wiring" }]
+    },
+    {
+      "id": "control",
+      "type": "database",
+      "label": "Control Database",
+      "sublabel": "routing, staff, sessions",
+      "tag": "PostgreSQL logical DB",
+      "pos": [715, 150],
+      "size": [185, 78],
+      "sources": [{ "path": "internal/repository/routing/store.go", "line": 11, "end_line": 13, "label": "routing store" }]
+    },
+    {
+      "id": "shard",
+      "type": "database",
+      "label": "Tenant Shard Database",
+      "sublabel": "cards, batches, audit decisions",
+      "tag": "PostgreSQL logical DB",
+      "pos": [930, 330],
+      "size": [205, 82],
+      "sources": [{ "path": "cmd/api/main.go", "line": 65, "end_line": 70, "label": "shard pool" }]
+    },
+    {
+      "id": "executor",
+      "type": "backend",
+      "label": "Batch Executor",
+      "sublabel": "independent Go daemon :8090",
+      "pos": [715, 490],
+      "size": [190, 78],
+      "sources": [{ "path": "cmd/executor/main.go", "line": 54, "end_line": 78, "label": "executor assembly" }]
+    },
+    {
+      "id": "authorization",
+      "type": "security",
+      "label": "Authorization Service",
+      "sublabel": "separate mTLS binary :8443",
+      "tag": "Network-isolated",
+      "pos": [930, 600],
+      "size": [190, 78],
+      "sources": [{ "path": "cmd/authorization/main.go", "line": 36, "end_line": 65, "label": "mTLS service" }]
+    },
+    {
+      "id": "vault",
+      "type": "security",
+      "label": "Credential Vault Adapter",
+      "sublabel": "in-memory in dev/test",
+      "tag": "No PAN/CVV persistence",
+      "pos": [1150, 600],
+      "size": [185, 78],
+      "sources": [{ "path": "internal/vault/memory.go", "line": 18, "end_line": 38, "label": "dev/test vault" }]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Public HTTP boundary — 127.0.0.1:8080",
+      "wraps": ["api"],
+      "pad": 38
+    },
+    {
+      "kind": "region",
+      "label": "Internal Compose network",
+      "wraps": ["api", "auth", "control", "shard", "executor"],
+      "pad": 42
+    },
+    {
+      "kind": "security-group",
+      "label": "Bank mTLS credential boundary",
+      "wraps": ["authorization", "vault"],
+      "pad": 38
+    }
+  ],
+  "connections": [
+    {
+      "id": "operator-request",
+      "from": "operators",
+      "to": "api",
+      "label": "HTTPS REST",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-auth",
+      "from": "api",
+      "to": "auth",
+      "label": "in-process",
+      "variant": "security",
+      "labelAt": [475, 426],
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight"
+    },
+    {
+      "id": "auth-control",
+      "from": "auth",
+      "to": "control",
+      "label": "sessions + routing",
+      "variant": "security"
+    },
+    {
+      "id": "control-shard",
+      "from": "control",
+      "to": "shard",
+      "label": "select tenant shard",
+      "variant": "emphasis"
+    },
+    {
+      "id": "executor-control",
+      "from": "executor",
+      "to": "control",
+      "label": "routes + user status",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "executor-shard",
+      "from": "executor",
+      "to": "shard",
+      "label": "claim + apply work",
+      "variant": "emphasis",
+      "labelAt": [900, 470]
+    },
+    {
+      "id": "bank-mtls",
+      "from": "bank",
+      "to": "authorization",
+      "label": "mTLS POST /v1/authorization-verifications",
+      "variant": "security"
+    },
+    {
+      "id": "authorization-vault",
+      "from": "authorization",
+      "to": "vault",
+      "label": "verify credentials",
+      "variant": "security",
+      "labelAt": [1198, 692]
+    },
+    {
+      "id": "authorization-shard",
+      "from": "authorization",
+      "to": "shard",
+      "label": "persist safe decision",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [1170, 500]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Primary request path",
+      "items": [
+        "Staff call the public REST API; JWT and tenant access checks run in-process.",
+        "The API uses control data to authorize and route tenant work to the shard."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Runtime dependencies",
+      "items": [
+        "Compose runs one PostgreSQL container with distinct control and shard logical databases.",
+        "The executor is separately deployable and has only internal operational endpoints."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Credential boundary",
+      "items": [
+        "The authorization binary accepts only a pinned mTLS bank client and persists no PAN or CVV.",
+        "Compose configures the in-memory vault only for development/test; a production external vault is not implemented here."
+      ]
+    }
+  ]
+}

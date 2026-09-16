@@ -25,6 +25,22 @@ Compose waits for healthy PostgreSQL and successful initialization before starti
 
 Both databases remain distinct: `card_issuer_control` stores routing/authentication and `card_issuer_shard_01` stores bank data. Existing migrations, checksums and seeds are reused unchanged. Every new initialization run checks migration history and preserves existing accounts, passwords and data.
 
+## Architecture
+
+The runtime architecture below reflects the current local proof-of-concept: the public API, access control, separate control and tenant-shard databases, the independent executor, and the mTLS authorization boundary.
+
+[Open the interactive architecture diagram](docs/diagrams/card-issuer-runtime.html)
+
+![Card Issuer API runtime architecture](docs/diagrams/card-issuer-runtime.visual-check.1440x900.light.png)
+
+### Improvements out of scope
+
+The following production-oriented improvements were intentionally out of scope for this work:
+
+1. Add an API gateway.
+2. Add a load balancer.
+3. Define cloud deployment planning.
+
 ## Health endpoints
 
 | Endpoint | Success | Failure |
@@ -127,6 +143,8 @@ docker compose --profile functional run --rm functional-tests
 ```
 
 The `functional` profile is not started by ordinary `docker compose up`.
+
+[Open the interactive bank-operator happy-path sequence diagram](docs/diagrams/pytest-happy-path.sequence.html). It traces issuer setup, bank-operator provisioning, card issuance and lifecycle, plus the control and tenant-shard assertions made by the pytest scenario.
 
 ## Executor operations
 

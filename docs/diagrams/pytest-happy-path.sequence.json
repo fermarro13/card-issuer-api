@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Bank Operator Pytest Happy Path",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [1200, 700]
+  },
+  "participants": [
+    { "id": "pytest", "type": "external", "label": "pytest" },
+    { "id": "issuer", "type": "external", "label": "Issuer operator" },
+    { "id": "bank_operator", "type": "external", "label": "Bank operator" },
+    { "id": "api", "type": "backend", "label": "Card Issuer API" },
+    { "id": "control", "type": "database", "label": "Control database" },
+    { "id": "shard", "type": "database", "label": "Bank shard" }
+  ],
+  "segments": [
+    { "from": 150, "to": 315, "label": "Establish tenant and operator" },
+    { "from": 318, "to": 437, "label": "Prepare card inputs" },
+    { "from": 438, "to": 557, "label": "Issue and prove idempotency" },
+    { "from": 558, "to": 612, "label": "Exercise lifecycle and replacement" }
+  ],
+  "messages": [
+    { "from": "issuer", "to": "api", "y": 180, "label": "log in as issuer operator", "variant": "emphasis" },
+    { "from": "api", "to": "issuer", "y": 210, "label": "200 access token + user", "variant": "return" },
+    { "from": "issuer", "to": "api", "y": 240, "label": "create bank (Idempotency-Key)", "variant": "emphasis" },
+    { "from": "api", "to": "issuer", "y": 270, "label": "201 bank id", "variant": "return" },
+    { "from": "pytest", "to": "control", "y": 300, "label": "assert issuer login, user, route, idempotency", "variant": "default" },
+    { "from": "pytest", "to": "shard", "y": 330, "label": "assert bank + provision audit", "variant": "default" },
+    { "from": "issuer", "to": "api", "y": 360, "label": "create assigned bank operator", "variant": "emphasis" },
+    { "from": "bank_operator", "to": "api", "y": 390, "label": "log in; GET /v1/me", "variant": "emphasis" },
+    { "from": "pytest", "to": "control", "y": 420, "label": "assert provision + bank-scoped login audit", "variant": "default" },
+    { "from": "bank_operator", "to": "api", "y": 450, "label": "create product, client, account reference", "variant": "emphasis" },
+    { "from": "pytest", "to": "shard", "y": 480, "label": "assert reads, idempotency, audits", "variant": "default" },
+    { "from": "bank_operator", "to": "api", "y": 510, "label": "issue card (Idempotency-Key)", "variant": "emphasis" },
+    { "from": "api", "to": "bank_operator", "y": 540, "label": "201 card + one-time credentials", "variant": "return" },
+    { "from": "bank_operator", "to": "api", "y": 570, "label": "replay issue; lifecycle; replacement activation", "variant": "emphasis" },
+    { "from": "pytest", "to": "shard", "y": 600, "label": "assert sanitized replay, history, audit, original closed", "variant": "default" }
+  ],
+  "cards": [
+    { "dot": "amber", "title": "Evidence checked", "items": ["Control: authentication, routing, and central idempotency", "Shard: tenant data, lifecycle history, idempotency, and audits", "Credentials occur only in the initial issue or replacement response"] }
+  ]
+}
