@@ -29,7 +29,7 @@ Both databases remain distinct: `card_issuer_control` stores routing/authenticat
 
 The runtime architecture below reflects the current local proof-of-concept: the public API, access control, separate control and tenant-shard databases, the independent executor, and the mTLS authorization boundary.
 
-[Open the interactive architecture diagram](docs/diagrams/card-issuer-runtime.html)
+[Open the interactive architecture diagram](https://fermarro13.github.io/card-issuer-api/)
 
 ![Card Issuer API runtime architecture](docs/diagrams/card-issuer-runtime.visual-check.1440x900.light.png)
 
