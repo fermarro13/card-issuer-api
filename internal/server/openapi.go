@@ -913,6 +913,7 @@ func ListCardStatusBatches() {}
 // @Param Idempotency-Key header string true "Unique idempotency key" minLength(1) maxLength(256)
 // @Param request body createCardStatusBatchRequest true "Draft batch"
 // @Success 201 {object} cardStatusBatchDetailResponse
+// @Success 202 {object} map[string]string "An identical request is still processing"
 // @Failure 400 {object} problemResponse
 // @Failure 401 {object} problemResponse
 // @Failure 403 {object} problemResponse

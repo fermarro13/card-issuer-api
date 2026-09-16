@@ -58,54 +58,54 @@ func (s *Service) ListCardStatusBatchItems(ctx context.Context, bank, id string)
 	return marshalItems(items, err)
 }
 
-func (s *Service) CreateCardStatusBatchWorkflow(ctx context.Context, principal auth.Principal, bank, key string, _ []byte, targetStatus, reason string, cardIDs []string, requestID string) (json.RawMessage, error) {
+func (s *Service) CreateCardStatusBatchWorkflow(ctx context.Context, principal auth.Principal, bank, key string, _ []byte, targetStatus, reason string, cardIDs []string, requestID string) (json.RawMessage, int, error) {
 	canonicalIDs, normalized, err := normalize(targetStatus, reason, cardIDs)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	tx, err := s.reader.Transaction(ctx, bank)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer tx.Rollback(ctx)
 	scope := "card-status-batches.create.actor." + principal.UserID
 	replay, err := s.claim(ctx, tx, bank, scope, key, normalized)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if replay.Found {
-		return replay.Response, nil
+		return replay.Response, replay.Status, nil
 	}
 	exists, err := tx.CardsExist(ctx, bank, canonicalIDs)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if !exists {
-		return nil, problem(statusUnprocessable, "invalid_card", "Every requested card must belong to the selected bank.")
+		return nil, 0, problem(statusUnprocessable, "invalid_card", "Every requested card must belong to the selected bank.")
 	}
 	batchID, err := newUUID()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	operationIDs, err := newIDs(len(canonicalIDs))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	batch, items, err := tx.CreateCardStatusBatchDraft(ctx, bank, domain.CardStatusBatchDraft{ID: batchID, IdempotencyRecordID: replay.RecordID, TargetStatus: strings.TrimSpace(targetStatus), Reason: strings.TrimSpace(reason), CardIDs: canonicalIDs, OperationIDs: operationIDs, ActorID: principal.UserID, ActorRole: principal.Role, ActorEntityID: actorEntityID(principal), RequestID: requestID})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	raw, err := s.json(bank, batch, items)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if err = tx.FinishIdempotency(ctx, bank, scope, key, statusCreated, raw, batch.ID, principal.UserID); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return raw, nil
+	return raw, statusCreated, nil
 }
 
 func (s *Service) ExecuteCardStatusBatchWorkflow(ctx context.Context, principal auth.Principal, bank, id, key string, body []byte, requestID string) (json.RawMessage, error) {

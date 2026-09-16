@@ -24,7 +24,7 @@ import (
 	"card-issuer-api/internal/server"
 	"card-issuer-api/internal/staff"
 	"card-issuer-api/internal/tenant"
-	"card-issuer-api/internal/vault"
+	"card-issuer-api/internal/vault/development"
 )
 
 // @title Card Issuer API
@@ -86,11 +86,11 @@ func run(logger *slog.Logger) int {
 	authentication := auth.NewService(authrepository.New(authPool), signer)
 	banks := bank.New(controlrepository.NewBank(authPool), routingrepository.New(control), shardrepository.NewBank(shard), cfg.ShardID)
 	catalogService := catalog.New(shardrepository.NewCatalog(shard))
-	if cfg.VaultMode != "memory" {
+	if cfg.VaultMode != "development" {
 		logger.Error("external credential vault provisioning is required")
 		return 1
 	}
-	credentialVault, err := vault.NewInMemory(cfg.Environment, cfg.TestVaultKey)
+	credentialVault, err := development.NewClient(cfg.DevelopmentVaultURL)
 	if err != nil {
 		logger.Error("credential vault initialization failed")
 		return 1

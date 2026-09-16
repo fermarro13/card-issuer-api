@@ -32,7 +32,9 @@ func (t transaction) LockAuthorizationReference(ctx context.Context, bank, refer
 func (t transaction) AuthorizationVerification(ctx context.Context, bank, reference string) (domain.AuthorizationVerification, bool, error) {
 	var value domain.AuthorizationVerification
 	var decision string
-	err := t.tx.QueryRow(ctx, "SELECT decision_id::text,bank_transaction_reference,decision FROM bank.authorization_verifications WHERE entity_id=$1 AND bank_transaction_reference=$2 FOR UPDATE", bank, reference).Scan(&value.DecisionID, &value.BankTransactionRef, &decision)
+	// LockAuthorizationReference already serializes this bank/reference pair. A
+	// row-level UPDATE lock would require an unnecessary UPDATE grant.
+	err := t.tx.QueryRow(ctx, "SELECT decision_id::text,bank_transaction_reference,decision FROM bank.authorization_verifications WHERE entity_id=$1 AND bank_transaction_reference=$2", bank, reference).Scan(&value.DecisionID, &value.BankTransactionRef, &decision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.AuthorizationVerification{}, false, nil
 	}

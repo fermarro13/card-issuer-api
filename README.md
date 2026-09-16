@@ -10,7 +10,7 @@ Use Docker Desktop with Linux containers on Windows or macOS, or Docker Engine w
 
 Compose includes a deliberately public base64-encoded 64-byte Ed25519 development key, so no JWT setup is required for local POC startup. **It must never be used in production.** Production deployments must inject a unique `AUTH_JWT_PRIVATE_KEY_B64` through their secret configuration. `AUTH_JWT_ISSUER` and `AUTH_JWT_AUDIENCE` default to `card-issuer-api` and should be set explicitly in production.
 
-The API is available at [http://localhost:8080/health/live](http://localhost:8080/health/live). [Readiness](http://localhost:8080/health/ready) checks the authentication, routing, and shard database connections.
+The API is available at [http://localhost:8080/health/live](http://localhost:8080/health/live). [Readiness](http://localhost:8080/health/ready) checks the authentication, routing, and shard database connections. The separate mTLS authorization service is published only to this machine at `https://localhost:8443`.
 
 ## What starts
 
@@ -20,8 +20,11 @@ The API is available at [http://localhost:8080/health/live](http://localhost:808
 | `db-init` | Runs portable shell-based schema migrations and test seeds, provisions restricted connection accounts, verifies their credentials, then exits successfully. |
 | `app` | Go 1.27.1 API server running as non-root with separate control/shard pools. |
 | `executor` | Independently deployable Go 1.27.1 batch/expiry daemon with internal-only operational endpoints. |
+| `devvault` | Non-durable development-only credential vault on the internal network; it has no host port. |
+| `pki-init` | Creates ignored local mTLS files in `.local/authorization-pki`, then exits successfully. |
+| `authorization` | TLS 1.3 client-certificate credential-and-lifecycle verifier, published only at `127.0.0.1:8443`. |
 
-Compose waits for healthy PostgreSQL and successful initialization before starting the app. `db-init` showing **Exited (0)** is expected. PostgreSQL is published only to this host at `127.0.0.1:5432`; the API is published at `127.0.0.1:8080`.
+Compose waits for healthy PostgreSQL and successful initialization before starting the app. `db-init` and `pki-init` showing **Exited (0)** are expected. PostgreSQL is published only to this host at `127.0.0.1:5432`; the API is published at `127.0.0.1:8080`.
 
 Both databases remain distinct: `card_issuer_control` stores routing/authentication and `card_issuer_shard_01` stores bank data. Existing migrations, checksums and seeds are reused unchanged. Every new initialization run checks migration history and preserves existing accounts, passwords and data.
 
@@ -66,6 +69,8 @@ Generated files are intentionally not committed. The network-isolated mTLS autho
 
 Import [postman/card-issuer-api.postman_collection.json](postman/card-issuer-api.postman_collection.json) into Postman. It includes every currently implemented health and authentication endpoint, collection variables, request-body examples, bearer-token capture, and refresh-cookie guidance.
 
+For the `Authorization verification (mTLS)` request, keep `base_url` as `http://localhost:8080` and use `authorization_base_url` as `https://localhost:8443`. Configure Postman with `.local/authorization-pki/bank-client.pem` and `.local/authorization-pki/bank-client-key.pem`, and trust `.local/authorization-pki/server-ca.pem`. These files are generated for one local machine only, are ignored by Git, and must never be used in another environment. Issue and activate a card first, copy its one-time credentials only into the transient `authorization_pan` and `authorization_cvv` collection variables, send a new transaction reference, then clear both variables.
+
 ## Development credentials and overrides
 
 The four application test accounts are documented in [database/TEST-CREDENTIALS.md](database/TEST-CREDENTIALS.md). Both bank users belong to Test Bank. These accounts are distinct from PostgreSQL connection accounts.
@@ -100,6 +105,7 @@ docker compose down
 # Rebuild/recreate the app after code changes.
 docker compose up --build -d app
 docker compose up --build -d executor
+docker compose up --build -d authorization
 
 # Open an administrative SQL session inside PostgreSQL.
 docker compose exec postgres psql -U postgres -d card_issuer_control
@@ -153,6 +159,8 @@ After starting a freshly initialized stack, run:
 ```powershell
 docker compose --profile functional run --rm functional-tests
 ```
+
+This run includes the unskipped issue → activate → mTLS authorization scenario. It uses the generated files mounted read-only and fails if the vault, PKI, or authorization service is unavailable. The full Compose smoke scripts additionally run a two-replica executor contention scenario and a concurrent idempotent batch-create test; the replica-specific pytest case is skipped when the `FUNCTIONAL_EXECUTOR_IDENTITIES` setting is absent.
 
 The `functional` profile is not started by ordinary `docker compose up`.
 

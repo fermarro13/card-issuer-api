@@ -1,5 +1,14 @@
 # Development Log
 
+## 2026-09-16 — LOCAL-AUTHORIZATION-VERIFICATION-001: Local authorization verification environment
+
+- User · Scope and plan approval: Implement [Local Authorization Verification Environment](docs/plans/2026-09-15-local-authorization-verification.md) so a fresh local Compose stack shares development credential state and runs the mTLS authorization scenario.
+- Orchestrator · Boundaries: The development vault is non-durable, internal-only, and accepted only in `development` or `test`; production remains external-vault only. Generated PKI remains ignored and local-only.
+- Implementation · Delivered: internal development-vault HTTP client/handler and non-durable `cmd/devvault`; explicit development-vault configuration; `cmd/localpki`; TLS authorization health probing and file-based fingerprint mapping; Compose PKI/vault/authorization wiring; unskipped authorization functional contract; Compose smoke coverage; and local/Postman instructions.
+- Automated tests · PASSED: `go version` reports `go1.27.1 windows/amd64`; `go test -count=1 ./...`, `go vet ./...`, `go test -race ./...`, and `git diff --check` pass.
+- Compose acceptance · PASSED: rebuilt the Compose images, recreated authorization, and ran `docker compose --profile functional run --build --rm functional-tests`; all three functional tests passed, including the mTLS authorization vault boundary.
+- Orchestrator · Status: Implementation delivered; architect, QA, and security gates remain pending independent review.
+
 ## 2026-09-15 — ISSUER-AUTHORIZATION-VAULT-001: Issuer authorization vault and credential verifier
 
 - User · Scope: Add a PCI-scoped credential-verification boundary for banks to check an issuer card's credentials and lifecycle eligibility.

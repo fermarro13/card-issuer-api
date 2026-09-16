@@ -12,7 +12,7 @@ import (
 )
 
 type batchHandlerService struct {
-	create  func(context.Context, auth.Principal, string, string, []byte, string, string, []string, string) (json.RawMessage, error)
+	create  func(context.Context, auth.Principal, string, string, []byte, string, string, []string, string) (json.RawMessage, int, error)
 	execute func(context.Context, auth.Principal, string, string, string, []byte, string) (json.RawMessage, error)
 	cancel  func(context.Context, auth.Principal, string, string, string, []byte, string) (json.RawMessage, error)
 	retry   func(context.Context, auth.Principal, string, string, string, []byte, string) (json.RawMessage, error)
@@ -27,7 +27,7 @@ func (batchHandlerService) GetCardStatusBatch(context.Context, string, string) (
 func (batchHandlerService) ListCardStatusBatchItems(context.Context, string, string) ([]json.RawMessage, error) {
 	return nil, nil
 }
-func (s batchHandlerService) CreateCardStatusBatchWorkflow(ctx context.Context, principal auth.Principal, bank, key string, body []byte, targetStatus, reason string, cardIDs []string, requestID string) (json.RawMessage, error) {
+func (s batchHandlerService) CreateCardStatusBatchWorkflow(ctx context.Context, principal auth.Principal, bank, key string, body []byte, targetStatus, reason string, cardIDs []string, requestID string) (json.RawMessage, int, error) {
 	return s.create(ctx, principal, bank, key, body, targetStatus, reason, cardIDs, requestID)
 }
 func (s batchHandlerService) ExecuteCardStatusBatchWorkflow(ctx context.Context, principal auth.Principal, bank, id, key string, body []byte, requestID string) (json.RawMessage, error) {
@@ -46,11 +46,11 @@ func TestCardStatusBatchHandlersUseTypedWorkflows(t *testing.T) {
 	first := "30000000-0000-4000-8000-000000000001"
 	second := "40000000-0000-4000-8000-000000000001"
 	service := batchHandlerService{
-		create: func(_ context.Context, _ auth.Principal, gotBank, key string, _ []byte, targetStatus, reason string, cardIDs []string, _ string) (json.RawMessage, error) {
+		create: func(_ context.Context, _ auth.Principal, gotBank, key string, _ []byte, targetStatus, reason string, cardIDs []string, _ string) (json.RawMessage, int, error) {
 			if gotBank != bank || key != "create-key" || targetStatus != "suspended" || reason != "fraud review" || len(cardIDs) != 2 || cardIDs[0] != second || cardIDs[1] != first {
 				t.Fatal("unexpected batch-create workflow inputs")
 			}
-			return json.RawMessage(`{"id":"` + batch + `","status":"draft"}`), nil
+			return json.RawMessage(`{"id":"` + batch + `","status":"draft"}`), http.StatusCreated, nil
 		},
 		execute: func(_ context.Context, _ auth.Principal, gotBank, id, key string, _ []byte, _ string) (json.RawMessage, error) {
 			if gotBank != bank || id != batch || key != "execute-key" {
@@ -106,5 +106,30 @@ func TestCardStatusBatchMutationRejectsReadOnlyRole(t *testing.T) {
 	handler.ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCreateCardStatusBatchReturnsWorkflowReplayStatus(t *testing.T) {
+	bank := "10000000-0000-4000-8000-000000000001"
+	handler := NewResourceHandler(
+		handlerAuth{claims: auth.Claims{UserID: "operator", UserSummary: auth.UserSummary{Role: "issuer_operator", Status: "enabled"}}},
+		Dependencies{Access: allowBankAccess{}, Batch: batchHandlerService{
+			create: func(context.Context, auth.Principal, string, string, []byte, string, string, []string, string) (json.RawMessage, int, error) {
+				return json.RawMessage(`{"status":"processing"}`), http.StatusAccepted, nil
+			},
+		}},
+		nil,
+	)
+	r := httptest.NewRequest(http.MethodPost, "/v1/banks/"+bank+"/card-status-batches", strings.NewReader(`{"target_status":"active","reason":"review","card_ids":["30000000-0000-4000-8000-000000000001"]}`))
+	r.Header.Set("Authorization", "Bearer token")
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Idempotency-Key", "key")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	if w.Body.String() != "{\"status\":\"processing\"}\n" {
+		t.Fatalf("body = %s", w.Body.String())
 	}
 }

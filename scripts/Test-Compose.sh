@@ -103,6 +103,10 @@ assert_equal "$app_user" '10001:10001' 'Application must run as non-root.'
 executor_id=$(compose ps -q executor | tr -d '\r\n')
 executor_user=$(docker inspect --format '{{.Config.User}}' "$executor_id")
 assert_equal "$executor_user" '10001:10001' 'Executor must run as non-root.'
+authorization_id=$(compose ps -q authorization | tr -d '\r\n')
+authorization_user=$(docker inspect --format '{{.Config.User}}' "$authorization_id")
+assert_equal "$authorization_user" '10001:10001' 'Authorization service must run as non-root.'
+wait_container_health "$authorization_id" 'authorization'
 assert_equal "$(query postgres "SELECT count(*) FROM pg_roles WHERE rolname IN ('ci_app_control','ci_app_auth','ci_app_shard','ci_app_executor') AND NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication);")" 4 'Runtime privilege attributes are incorrect.'
 
 printf '%s\n' 'Checking API and executor independent lifecycle...'
@@ -117,7 +121,8 @@ wait_http http://executor:8090 /health/ready 200
 compose start app >/dev/null
 wait_http http://app:8080 /health/ready 200
 
-printf '%s\n' 'Checking multi-replica executor identities...'
+printf '%s\n' 'Checking competing executor replicas...'
+compose stop executor >/dev/null
 compose run -d --no-deps --name "$replica_a_name" -e EXECUTOR_ID=executor-smoke-02 executor >/dev/null
 compose run -d --no-deps --name "$replica_b_name" -e EXECUTOR_ID=executor-smoke-03 executor >/dev/null
 wait_container_health "$replica_a_name" 'executor replica A'
@@ -125,8 +130,8 @@ wait_container_health "$replica_b_name" 'executor replica B'
 assert_executor_identity "$replica_a_name" 'executor-smoke-02'
 assert_executor_identity "$replica_b_name" 'executor-smoke-03'
 
-printf '%s\n' 'Running the Compose functional profile...'
-compose --profile functional run --rm functional-tests >/dev/null
+printf '%s\n' 'Running the Compose functional profile, including concurrency coverage...'
+compose --profile functional run --rm --no-deps -e FUNCTIONAL_EXECUTOR_IDENTITIES=executor-smoke-02,executor-smoke-03 functional-tests >/dev/null
 
 printf '%s\n' 'Checking retained data and passwords through down/up...'
 query card_issuer_control "UPDATE control.users SET password_hash=password_hash||'changed' WHERE normalized_username='bank_operator';" >/dev/null
@@ -158,4 +163,4 @@ query card_issuer_control "UPDATE ci_meta.schema_migrations SET checksum='$check
 compose rm --force db-init >/dev/null
 compose up -d >/dev/null
 wait_http http://app:8080 /health/ready 200
-printf '%s\n' 'PASS: startup, functional profile, independent API/executor lifecycle, replica identities, persistence, initialization gates, non-root execution and outage recovery.'
+printf '%s\n' 'PASS: startup, functional authorization profile, independent API/executor lifecycle, replica identities, persistence, initialization gates, non-root execution and outage recovery.'

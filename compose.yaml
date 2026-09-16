@@ -42,6 +42,38 @@ services:
     restart: "no"
     networks: [internal]
 
+  pki-init:
+    build:
+      context: .
+      target: localpki
+    environment:
+      LOCAL_PKI_DIR: /pki
+    volumes:
+      - ./.local/authorization-pki:/pki
+    restart: "no"
+    networks: [internal]
+
+  devvault:
+    build:
+      context: .
+      target: devvault
+    environment:
+      APP_ENV: development
+      DEV_VAULT_ADDR: ":8081"
+      TEST_VAULT_KEY_B64: ${TEST_VAULT_KEY_B64:-QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI}
+    healthcheck:
+      test: ["CMD", "/card-issuer-devvault", "healthcheck"]
+      interval: 5s
+      timeout: 4s
+      retries: 5
+      start_period: 5s
+    stop_grace_period: 15s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    networks: [internal]
+
   app:
     build:
       context: .
@@ -49,8 +81,8 @@ services:
     environment:
       HTTP_ADDR: ":8080"
       APP_ENV: development
-      CREDENTIAL_VAULT_MODE: memory
-      TEST_VAULT_KEY_B64: ${TEST_VAULT_KEY_B64:-QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI}
+      CREDENTIAL_VAULT_MODE: development
+      DEVELOPMENT_VAULT_URL: http://devvault:8081
       PGHOST: postgres
       PGPORT: "5432"
       PGSSLMODE: disable
@@ -76,8 +108,69 @@ services:
         condition: service_healthy
       db-init:
         condition: service_completed_successfully
+      devvault:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "/card-issuer-api", "healthcheck"]
+      interval: 5s
+      timeout: 4s
+      retries: 5
+      start_period: 5s
+    stop_grace_period: 15s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    networks: [internal, frontend]
+
+  authorization:
+    build:
+      context: .
+      target: authorization
+    environment:
+      APP_ENV: development
+      HTTP_ADDR: ":8080"
+      CREDENTIAL_VAULT_MODE: development
+      DEVELOPMENT_VAULT_URL: http://devvault:8081
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGSSLMODE: disable
+      CONTROL_DATABASE: ${CONTROL_DATABASE:-card_issuer_control}
+      SHARD_DATABASE: ${SHARD_DATABASE:-card_issuer_shard_01}
+      CONTROL_DB_USER: ci_app_control
+      AUTH_DATABASE: ${AUTH_DATABASE:-card_issuer_control}
+      AUTH_DB_USER: ci_app_auth
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-Dev-Auth-Runtime!2026}
+      SHARD_DB_USER: ci_app_shard
+      CONTROL_DB_PASSWORD: ${CONTROL_DB_PASSWORD:-Dev-Control-Reader!2026}
+      SHARD_DB_PASSWORD: ${SHARD_DB_PASSWORD:-Dev-Shard-Runtime!2026}
+      API_CURSOR_HMAC_KEY_B64: ${API_CURSOR_HMAC_KEY_B64:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA}
+      AUTH_JWT_PRIVATE_KEY_B64: ${AUTH_JWT_PRIVATE_KEY_B64:-nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2DXWpgBgrEKt9VL/tPJZAc6DuFy89qmIyWvAhpo9wdRGg}
+      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-card-issuer-api}
+      AUTH_JWT_AUDIENCE: ${AUTH_JWT_AUDIENCE:-card-issuer-api}
+      AUTHORIZATION_HTTP_ADDR: ":8443"
+      AUTHORIZATION_TLS_CERT_FILE: /pki/authorization-server.pem
+      AUTHORIZATION_TLS_KEY_FILE: /pki/authorization-server-key.pem
+      AUTHORIZATION_SERVER_CA_FILE: /pki/server-ca.pem
+      AUTHORIZATION_CLIENT_CA_FILE: /pki/client-ca.pem
+      AUTHORIZATION_CLIENT_CERTIFICATES_FILE: /pki/client-certificates.json
+      AUTHORIZATION_HEALTH_CERT_FILE: /pki/bank-client.pem
+      AUTHORIZATION_HEALTH_KEY_FILE: /pki/bank-client-key.pem
+    volumes:
+      - ./.local/authorization-pki:/pki:ro
+    ports:
+      - "127.0.0.1:${AUTHORIZATION_PORT:-8443}:8443"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+      pki-init:
+        condition: service_completed_successfully
+      devvault:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/card-issuer-authorization", "healthcheck"]
       interval: 5s
       timeout: 4s
       retries: 5
@@ -139,10 +232,21 @@ services:
       FUNCTIONAL_PGPASSWORD: ${POSTGRES_PASSWORD:-Dev-Postgres-Admin!2026}
       FUNCTIONAL_CONTROL_DATABASE: ${CONTROL_DATABASE:-card_issuer_control}
       FUNCTIONAL_SHARD_DATABASE: ${SHARD_DATABASE:-card_issuer_shard_01}
+      FUNCTIONAL_AUTHORIZATION_URL: https://authorization:8443
+      FUNCTIONAL_AUTHORIZATION_BANK_ID: 10000000-0000-4000-8000-000000000001
+      FUNCTIONAL_AUTHORIZATION_CA_FILE: /pki/server-ca.pem
+      FUNCTIONAL_AUTHORIZATION_MAPPED_CERT_FILE: /pki/bank-client.pem
+      FUNCTIONAL_AUTHORIZATION_MAPPED_KEY_FILE: /pki/bank-client-key.pem
+      FUNCTIONAL_AUTHORIZATION_CLIENT_CA_CERT_FILE: /pki/client-ca.pem
+      FUNCTIONAL_AUTHORIZATION_CLIENT_CA_KEY_FILE: /pki/client-ca-key.pem
+    volumes:
+      - ./.local/authorization-pki:/pki:ro
     depends_on:
       app:
         condition: service_healthy
       executor:
+        condition: service_healthy
+      authorization:
         condition: service_healthy
     restart: "no"
     networks: [internal]

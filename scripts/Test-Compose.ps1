@@ -69,6 +69,9 @@ try {
     Assert ($LASTEXITCODE -eq 0 -and $user -eq '10001:10001') 'Application must run as non-root.'
     $executorID=(Invoke-Compose -Arguments @('ps','-q','executor')).Trim()
     Assert ((& docker inspect --format '{{.Config.User}}' $executorID) -eq '10001:10001') 'Executor must run as non-root.'
+    $authorizationID=(Invoke-Compose -Arguments @('ps','-q','authorization')).Trim()
+    Assert ((& docker inspect --format '{{.Config.User}}' $authorizationID) -eq '10001:10001') 'Authorization service must run as non-root.'
+    Wait-ContainerHealth $authorizationID 'authorization'
     Assert ((Query 'postgres' "SELECT count(*) FROM pg_roles WHERE rolname IN ('ci_app_control','ci_app_auth','ci_app_shard','ci_app_executor') AND NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication);") -eq '4') 'Runtime privilege attributes are incorrect.'
 
     Write-Host 'Checking API and executor independent lifecycle...'
@@ -83,7 +86,8 @@ try {
     Invoke-Compose -Arguments @('start','app') | Out-Null
     Wait-HTTP 'http://app:8080' '/health/ready' 200
 
-    Write-Host 'Checking multi-replica executor identities...'
+    Write-Host 'Checking competing executor replicas...'
+    Invoke-Compose -Arguments @('stop','executor') | Out-Null
     Invoke-Compose -Arguments @('run','-d','--no-deps','--name',$replicaAName,'-e','EXECUTOR_ID=executor-smoke-02','executor') | Out-Null
     Invoke-Compose -Arguments @('run','-d','--no-deps','--name',$replicaBName,'-e','EXECUTOR_ID=executor-smoke-03','executor') | Out-Null
     Wait-ContainerHealth $replicaAName 'executor replica A'
@@ -91,8 +95,8 @@ try {
     Assert-ExecutorIdentity $replicaAName 'executor-smoke-02'
     Assert-ExecutorIdentity $replicaBName 'executor-smoke-03'
 
-    Write-Host 'Running the Compose functional profile...'
-    Invoke-Compose -Arguments @('--profile','functional','run','--rm','functional-tests') | Out-Null
+    Write-Host 'Running the Compose functional profile, including concurrency coverage...'
+    Invoke-Compose -Arguments @('--profile','functional','run','--rm','--no-deps','-e','FUNCTIONAL_EXECUTOR_IDENTITIES=executor-smoke-02,executor-smoke-03','functional-tests') | Out-Null
 
     Write-Host 'Checking retained data and passwords through down/up...'
     Query 'card_issuer_control' "UPDATE control.users SET password_hash=password_hash||'changed' WHERE normalized_username='bank_operator';" | Out-Null
@@ -123,7 +127,7 @@ try {
     Invoke-Compose -Arguments @('rm','--force','db-init') | Out-Null
     Invoke-Compose -Arguments @('up','-d') | Out-Null
     Wait-HTTP 'http://app:8080' '/health/ready' 200
-    Write-Host 'PASS: startup, functional profile, independent API/executor lifecycle, replica identities, persistence, initialization gates, non-root execution and outage recovery.'
+    Write-Host 'PASS: startup, functional authorization profile, independent API/executor lifecycle, replica identities, persistence, initialization gates, non-root execution and outage recovery.'
 } finally {
     # Only this script's exact randomly named project may be removed, including its disposable volume.
     if ($project -notmatch '^ci-smoke-[0-9a-f]{32}$') { throw 'Unsafe cleanup project.' }

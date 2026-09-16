@@ -10,7 +10,7 @@ import httpx
 import psycopg
 import pytest
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
@@ -544,7 +544,7 @@ def authorization_provisioning() -> AuthorizationProvisioning:
     values = {field: os.environ.get(environment) for field, environment in names.items()}
     missing = [environment for field, environment in names.items() if not values[field]]
     if missing:
-        pytest.skip("mTLS/vault provisioning unavailable: missing " + ", ".join(missing))
+        pytest.fail("mTLS/vault provisioning unavailable: missing " + ", ".join(missing))
     provisioning = AuthorizationProvisioning(
         url=str(values["url"]),
         bank_id=str(values["bank_id"]),
@@ -562,7 +562,7 @@ def authorization_provisioning() -> AuthorizationProvisioning:
         provisioning.client_ca_key_file,
     ) if not path.is_file()]
     if unavailable:
-        pytest.skip("mTLS/vault provisioning unavailable: certificate material is not mounted")
+        pytest.fail("mTLS/vault provisioning unavailable: certificate material is not mounted")
     return provisioning
 
 
@@ -639,7 +639,7 @@ def generate_unmapped_client_certificate(provisioning: AuthorizationProvisioning
         .not_valid_after(now + timedelta(minutes=10))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]), critical=False)
-        .sign(ca_key, hashes.SHA256())
+        .sign(ca_key, None)
     )
     certificate_file, key_file = directory / "unmapped-client.pem", directory / "unmapped-client-key.pem"
     certificate_file.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
@@ -730,6 +730,20 @@ def test_authorization_vault_mtls_boundary(tmp_path: Path) -> None:
         cross_reference = f"authorization-{run}-cross-bank"
         assert authorization_request(mapped_client, cross_reference, cross_bank_credentials)["decision"] == "declined"
         assert_safe_authorization_rows(shard, provisioning.bank_id, cross_reference, None)
+
+        no_certificate_context = ssl.create_default_context(cafile=str(provisioning.ca_file))
+        no_certificate_context.minimum_version = ssl.TLSVersion.TLSv1_3
+        with httpx.Client(base_url=provisioning.url, verify=no_certificate_context, timeout=10.0) as no_certificate_client:
+            print_endpoint("POST", "/v1/authorization-verifications")
+            try:
+                response = no_certificate_client.post(
+                    "/v1/authorization-verifications",
+                    json={"bank_transaction_reference": f"authorization-{run}-no-client-cert", "pan": active_credentials.pan, "cvv": active_credentials.cvv},
+                )
+            except httpx.TransportError:
+                pass
+            else:
+                assert response.status_code == 401, safe_response_body(response)
 
         unmapped_certificate, unmapped_key = generate_unmapped_client_certificate(provisioning, tmp_path)
         with tls_client(provisioning.url, provisioning.ca_file, unmapped_certificate, unmapped_key) as unmapped_client:

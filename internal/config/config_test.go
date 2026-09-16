@@ -50,13 +50,48 @@ func TestInvalidConfigurationDoesNotExposeCredentials(t *testing.T) {
 	}
 }
 
-func TestMemoryVaultIsRejectedInProduction(t *testing.T) {
+func TestDevelopmentVaultIsRejectedOutsideDevelopmentAndTest(t *testing.T) {
 	values := validValues()
 	values["APP_ENV"] = "production"
-	values["CREDENTIAL_VAULT_MODE"] = "memory"
+	values["CREDENTIAL_VAULT_MODE"] = "development"
+	values["DEVELOPMENT_VAULT_URL"] = "http://devvault:8081"
 	_, err := load(func(key string) string { return values[key] })
 	if err == nil || !strings.Contains(err.Error(), "not allowed") {
-		t.Fatalf("production memory vault error = %v", err)
+		t.Fatalf("production development vault error = %v", err)
+	}
+}
+
+func TestDevelopmentVaultRequiresInternalURL(t *testing.T) {
+	values := validValues()
+	values["CREDENTIAL_VAULT_MODE"] = "development"
+	values["DEVELOPMENT_VAULT_URL"] = "https://devvault:8081"
+	_, err := load(func(key string) string { return values[key] })
+	if err == nil || !strings.Contains(err.Error(), "DEVELOPMENT_VAULT_URL") {
+		t.Fatalf("development URL error = %v", err)
+	}
+}
+
+func TestExternalVaultDoesNotLoadDevelopmentVault(t *testing.T) {
+	values := validValues()
+	values["CREDENTIAL_VAULT_MODE"] = "external"
+	values["DEVELOPMENT_VAULT_URL"] = "not a URL"
+	cfg, err := load(func(key string) string { return values[key] })
+	if err != nil || cfg.DevelopmentVaultURL != "" {
+		t.Fatalf("external vault configuration = %#v, %v", cfg, err)
+	}
+}
+
+func TestDevelopmentVaultProcessIsLimitedToDevelopmentAndTest(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DEV_VAULT_ADDR", "127.0.0.1:8081")
+	t.Setenv("TEST_VAULT_KEY_B64", base64.RawStdEncoding.EncodeToString(make([]byte, 32)))
+	cfg, err := DevelopmentVaultFromEnvironment()
+	if err != nil || cfg.Address != "127.0.0.1:8081" {
+		t.Fatalf("development vault configuration = %#v, %v", cfg, err)
+	}
+	t.Setenv("APP_ENV", "production")
+	if _, err := DevelopmentVaultFromEnvironment(); err == nil {
+		t.Fatal("production development vault process was accepted")
 	}
 }
 

@@ -12,21 +12,21 @@ type CredentialVault interface {
 }
 
 type ProvisionRequest struct {
-	CardID string
+	CardID string `json:"card_id"`
 }
 
 type ProvisionedCredential struct {
-	MaskedPAN string
-	PAN       string
-	CVV       string
+	MaskedPAN string `json:"masked_pan"`
+	PAN       string `json:"pan"`
+	CVV       string `json:"cvv"`
 }
 
 type VerificationRequest struct {
-	PAN string
-	CVV string
+	PAN string `json:"pan"`
+	CVV string `json:"cvv"`
 }
 
 type VerificationResult struct {
-	CardID string
-	Valid  bool
+	CardID string `json:"card_id"`
+	Valid  bool   `json:"valid"`
 }

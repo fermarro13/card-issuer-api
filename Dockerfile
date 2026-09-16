@@ -6,7 +6,7 @@ COPY go.mod go.sum ./
 RUN go version && go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-RUN go tool swag init -g main.go -d cmd/api,internal/server --parseInternal -o docs && go test ./... && go vet ./... && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-api ./cmd/api && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-executor ./cmd/executor && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-authorization ./cmd/authorization
+RUN go tool swag init -g main.go -d cmd/api,internal/server --parseInternal -o docs && go test ./... && go vet ./... && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-api ./cmd/api && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-executor ./cmd/executor && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-authorization ./cmd/authorization && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-devvault ./cmd/devvault && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-localpki ./cmd/localpki
 
 FROM postgres:17.11-bookworm AS db-init
 WORKDIR /workspace
@@ -34,3 +34,14 @@ COPY --from=build /out/card-issuer-authorization /card-issuer-authorization
 USER 10001:10001
 EXPOSE 8443
 ENTRYPOINT ["/card-issuer-authorization"]
+
+FROM scratch AS devvault
+COPY --from=build /out/card-issuer-devvault /card-issuer-devvault
+USER 10001:10001
+EXPOSE 8081
+ENTRYPOINT ["/card-issuer-devvault"]
+
+FROM scratch AS localpki
+COPY --from=build /out/card-issuer-localpki /card-issuer-localpki
+USER 10001:10001
+ENTRYPOINT ["/card-issuer-localpki"]

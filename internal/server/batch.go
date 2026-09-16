@@ -75,12 +75,12 @@ func (h resourceHandler) createCardStatusBatch(w http.ResponseWriter, r *http.Re
 		return
 	}
 	body, _ := json.Marshal(input)
-	raw, err := h.batch.CreateCardStatusBatchWorkflow(r.Context(), claims.Principal(), bank, key, body, input.TargetStatus, input.Reason, input.CardIDs, RequestID(r))
+	raw, status, err := h.batch.CreateCardStatusBatchWorkflow(r.Context(), claims.Principal(), bank, key, body, input.TargetStatus, input.Reason, input.CardIDs, RequestID(r))
 	if err != nil {
 		h.writeWorkflowError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, raw)
+	writeJSON(w, status, raw)
 }
 
 func (h resourceHandler) cardStatusBatchCommand(w http.ResponseWriter, r *http.Request, claims auth.Claims, bank, id, action string) {

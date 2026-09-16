@@ -22,10 +22,13 @@ import (
 	"card-issuer-api/internal/config"
 	"card-issuer-api/internal/database"
 	shardrepository "card-issuer-api/internal/repository/shard"
-	"card-issuer-api/internal/vault"
+	"card-issuer-api/internal/vault/development"
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
+		os.Exit(healthcheck())
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(logger); err != nil {
 		logger.Error("authorization service stopped", "reason", err.Error())
@@ -38,10 +41,10 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return errors.New("invalid application configuration")
 	}
-	if cfg.VaultMode != "memory" {
+	if cfg.VaultMode != "development" {
 		return errors.New("an external PCI-compliant credential vault is required")
 	}
-	credentialVault, err := vault.NewInMemory(cfg.Environment, cfg.TestVaultKey)
+	credentialVault, err := development.NewClient(cfg.DevelopmentVaultURL)
 	if err != nil {
 		return errors.New("credential vault initialization failed")
 	}
@@ -97,8 +100,8 @@ func mtlsConfiguration() (*tls.Config, map[string]string, string, error) {
 	if !clientCAs.AppendCertsFromPEM(caPEM) {
 		return nil, nil, "", errors.New("no client CA certificate")
 	}
-	banks := map[string]string{}
-	if err := json.Unmarshal([]byte(os.Getenv("AUTHORIZATION_CLIENT_CERTIFICATES")), &banks); err != nil || len(banks) == 0 {
+	banks, err := certificateBanks()
+	if err != nil {
 		return nil, nil, "", errors.New("client certificate mappings are required")
 	}
 	for fingerprint, bank := range banks {
@@ -110,4 +113,58 @@ func mtlsConfiguration() (*tls.Config, map[string]string, string, error) {
 		}
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientCAs}, banks, address, nil
+}
+
+func certificateBanks() (map[string]string, error) {
+	fromEnvironment := strings.TrimSpace(os.Getenv("AUTHORIZATION_CLIENT_CERTIFICATES"))
+	mappingFile := strings.TrimSpace(os.Getenv("AUTHORIZATION_CLIENT_CERTIFICATES_FILE"))
+	if (fromEnvironment == "" && mappingFile == "") || (fromEnvironment != "" && mappingFile != "") {
+		return nil, errors.New("exactly one client certificate mapping source is required")
+	}
+	data := []byte(fromEnvironment)
+	if mappingFile != "" {
+		var err error
+		data, err = os.ReadFile(mappingFile)
+		if err != nil {
+			return nil, errors.New("client certificate mapping file is unavailable")
+		}
+	}
+	banks := map[string]string{}
+	if err := json.Unmarshal(data, &banks); err != nil || len(banks) == 0 {
+		return nil, errors.New("client certificate mappings are required")
+	}
+	return banks, nil
+}
+
+func healthcheck() int {
+	address := os.Getenv("AUTHORIZATION_HTTP_ADDR")
+	if address == "" {
+		return 1
+	}
+	certificate, err := tls.LoadX509KeyPair(os.Getenv("AUTHORIZATION_HEALTH_CERT_FILE"), os.Getenv("AUTHORIZATION_HEALTH_KEY_FILE"))
+	if err != nil {
+		return 1
+	}
+	caPEM, err := os.ReadFile(os.Getenv("AUTHORIZATION_SERVER_CA_FILE"))
+	if err != nil {
+		return 1
+	}
+	rootCAs := x509.NewCertPool()
+	if !rootCAs.AppendCertsFromPEM(caPEM) {
+		return 1
+	}
+	connection, err := tls.Dial("tcp", net.JoinHostPort("127.0.0.1", port(address)), &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: rootCAs, Certificates: []tls.Certificate{certificate}, ServerName: "localhost"})
+	if err != nil {
+		return 1
+	}
+	defer connection.Close()
+	return 0
+}
+
+func port(address string) string {
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return ""
+	}
+	return port
 }

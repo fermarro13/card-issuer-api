@@ -59,7 +59,7 @@ type BatchService interface {
 	ListCardStatusBatches(context.Context, string) ([]json.RawMessage, error)
 	GetCardStatusBatch(context.Context, string, string) (json.RawMessage, error)
 	ListCardStatusBatchItems(context.Context, string, string) ([]json.RawMessage, error)
-	CreateCardStatusBatchWorkflow(context.Context, auth.Principal, string, string, []byte, string, string, []string, string) (json.RawMessage, error)
+	CreateCardStatusBatchWorkflow(context.Context, auth.Principal, string, string, []byte, string, string, []string, string) (json.RawMessage, int, error)
 	ExecuteCardStatusBatchWorkflow(context.Context, auth.Principal, string, string, string, []byte, string) (json.RawMessage, error)
 	CancelCardStatusBatchWorkflow(context.Context, auth.Principal, string, string, string, []byte, string) (json.RawMessage, error)
 	RetryCardStatusBatchWorkflow(context.Context, auth.Principal, string, string, string, []byte, string) (json.RawMessage, error)

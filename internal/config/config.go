@@ -12,18 +12,18 @@ import (
 )
 
 type Config struct {
-	Environment   string
-	VaultMode     string
-	TestVaultKey  []byte
-	HTTPAddress   string
-	AuthURL       string
-	ControlURL    string
-	ShardURL      string
-	ShardID       string
-	CursorKey     []byte
-	JWTPrivateKey ed25519.PrivateKey
-	JWTIssuer     string
-	JWTAudience   string
+	Environment         string
+	VaultMode           string
+	DevelopmentVaultURL string
+	HTTPAddress         string
+	AuthURL             string
+	ControlURL          string
+	ShardURL            string
+	ShardID             string
+	CursorKey           []byte
+	JWTPrivateKey       ed25519.PrivateKey
+	JWTIssuer           string
+	JWTAudience         string
 }
 
 func FromEnvironment() (Config, error) {
@@ -42,28 +42,19 @@ func load(getenv func(string) string) (Config, error) {
 	if environment != "development" && environment != "test" && environment != "production" {
 		return Config{}, errors.New("invalid APP_ENV")
 	}
-	vaultMode := value("CREDENTIAL_VAULT_MODE", "")
-	if vaultMode == "" {
-		vaultMode = "external"
-		if environment == "development" || environment == "test" {
-			vaultMode = "memory"
-		}
-	}
-	if vaultMode != "memory" && vaultMode != "external" {
+	vaultMode := value("CREDENTIAL_VAULT_MODE", "external")
+	if vaultMode != "development" && vaultMode != "external" {
 		return Config{}, errors.New("invalid CREDENTIAL_VAULT_MODE")
 	}
-	if vaultMode == "memory" && environment == "production" {
-		return Config{}, errors.New("CREDENTIAL_VAULT_MODE=memory is not allowed in production")
+	if vaultMode == "development" && environment != "development" && environment != "test" {
+		return Config{}, errors.New("CREDENTIAL_VAULT_MODE=development is not allowed outside development or test")
 	}
-	var testVaultKey []byte
-	if vaultMode == "memory" {
-		var err error
-		testVaultKey, err = base64.RawStdEncoding.DecodeString(getenv("TEST_VAULT_KEY_B64"))
-		if err != nil {
-			testVaultKey, err = base64.StdEncoding.DecodeString(getenv("TEST_VAULT_KEY_B64"))
-		}
-		if err != nil || len(testVaultKey) < 32 {
-			return Config{}, errors.New("invalid TEST_VAULT_KEY_B64")
+	developmentVaultURL := ""
+	if vaultMode == "development" {
+		developmentVaultURL = getenv("DEVELOPMENT_VAULT_URL")
+		developmentURL, parseErr := url.Parse(developmentVaultURL)
+		if parseErr != nil || developmentURL.Scheme != "http" || developmentURL.Host == "" || developmentURL.User != nil || developmentURL.RawQuery != "" || developmentURL.Fragment != "" || (developmentURL.Path != "" && developmentURL.Path != "/") {
+			return Config{}, errors.New("invalid DEVELOPMENT_VAULT_URL")
 		}
 	}
 	if _, _, err := net.SplitHostPort(address); err != nil {
@@ -124,5 +115,39 @@ func load(getenv func(string) string) (Config, error) {
 	if issuer == "" || audience == "" {
 		return Config{}, errors.New("AUTH_JWT_ISSUER and AUTH_JWT_AUDIENCE are required")
 	}
-	return Config{Environment: environment, VaultMode: vaultMode, TestVaultKey: testVaultKey, HTTPAddress: address, AuthURL: auth, ControlURL: control, ShardURL: shard, ShardID: shardID, CursorKey: cursorKey, JWTPrivateKey: ed25519.PrivateKey(privateKey), JWTIssuer: issuer, JWTAudience: audience}, nil
+	return Config{Environment: environment, VaultMode: vaultMode, DevelopmentVaultURL: developmentVaultURL, HTTPAddress: address, AuthURL: auth, ControlURL: control, ShardURL: shard, ShardID: shardID, CursorKey: cursorKey, JWTPrivateKey: ed25519.PrivateKey(privateKey), JWTIssuer: issuer, JWTAudience: audience}, nil
+}
+
+// DevVaultConfig is the minimal configuration needed by cmd/devvault.
+type DevVaultConfig struct {
+	Environment  string
+	Address      string
+	TestVaultKey []byte
+}
+
+// DevelopmentVaultFromEnvironment loads only development-vault settings. The
+// standalone process intentionally has no database configuration.
+func DevelopmentVaultFromEnvironment() (DevVaultConfig, error) {
+	value := func(name, fallback string) string {
+		if v := os.Getenv(name); v != "" {
+			return v
+		}
+		return fallback
+	}
+	environment := os.Getenv("APP_ENV")
+	if environment != "development" && environment != "test" {
+		return DevVaultConfig{}, errors.New("development vault is allowed only in development or test")
+	}
+	address := value("DEV_VAULT_ADDR", ":8081")
+	if _, _, err := net.SplitHostPort(address); err != nil {
+		return DevVaultConfig{}, errors.New("invalid DEV_VAULT_ADDR")
+	}
+	key, err := base64.RawStdEncoding.DecodeString(os.Getenv("TEST_VAULT_KEY_B64"))
+	if err != nil {
+		key, err = base64.StdEncoding.DecodeString(os.Getenv("TEST_VAULT_KEY_B64"))
+	}
+	if err != nil || len(key) < 32 {
+		return DevVaultConfig{}, errors.New("invalid TEST_VAULT_KEY_B64")
+	}
+	return DevVaultConfig{Environment: environment, Address: address, TestVaultKey: key}, nil
 }
