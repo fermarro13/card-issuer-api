@@ -85,7 +85,7 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
-    networks: [internal]
+    networks: [internal, frontend]
 
   executor:
     build:
@@ -151,3 +151,5 @@ volumes:
 networks:
   internal:
     internal: true
+  frontend:
+    driver: bridge
