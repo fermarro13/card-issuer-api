@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"time"
 
+	_ "card-issuer-api/docs"
 	"card-issuer-api/internal/auth"
+	httpSwagger "github.com/swaggo/http-swagger"
 )
 
 type Probe func(context.Context) error
@@ -18,6 +20,7 @@ const ReadinessTimeout = 2 * time.Second
 
 func Handler(authProbe, control, shard Probe, authentication auth.API, business ...http.Handler) http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("/swagger/", httpSwagger.Handler())
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { respond(w, http.StatusOK, "ok") })
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), ReadinessTimeout)

@@ -6,7 +6,7 @@ COPY go.mod go.sum ./
 RUN go version && go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-RUN go test ./... && go vet ./... && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-api ./cmd/api && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-executor ./cmd/executor && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-authorization ./cmd/authorization
+RUN go tool swag init -g main.go -d cmd/api,internal/server --parseInternal -o docs && go test ./... && go vet ./... && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-api ./cmd/api && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-executor ./cmd/executor && go build -trimpath -ldflags="-s -w" -o /out/card-issuer-authorization ./cmd/authorization
 
 FROM postgres:17.11-bookworm AS db-init
 WORKDIR /workspace

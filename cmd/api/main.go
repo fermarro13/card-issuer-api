@@ -27,6 +27,15 @@ import (
 	"card-issuer-api/internal/vault"
 )
 
+// @title Card Issuer API
+// @version 1.0
+// @description Public HTTP API for issuer operations. The interactive catalog is served at /swagger/index.html.
+// @BasePath /
+// @schemes http https
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Enter a JWT access token as `Bearer <token>`.
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
 		os.Exit(healthcheck())

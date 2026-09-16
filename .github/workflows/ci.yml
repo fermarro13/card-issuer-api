@@ -16,6 +16,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - run: go tool swag init -g main.go -d cmd/api,internal/server --parseInternal -o docs
       - run: go vet ./...
       - run: go test ./...
       - run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0

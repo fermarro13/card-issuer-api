@@ -4,3 +4,6 @@ database/tests/.test-output/
 .env.*
 !.env.example
 .gocache-qa*
+docs/docs.go
+docs/swagger.json
+docs/swagger.yaml

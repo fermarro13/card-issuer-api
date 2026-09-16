@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -19,6 +20,91 @@ func TestLivenessDoesNotCallDatabases(t *testing.T) {
 	Handler(probe, probe, probe, nil).ServeHTTP(w, httptest.NewRequest("GET", "/health/live", nil))
 	if w.Code != 200 || w.Body.String() != "{\"status\":\"ok\"}\n" {
 		t.Fatalf("unexpected liveness response: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestSwaggerCatalogIsPublicAndComplete(t *testing.T) {
+	probe := func(context.Context) error { return nil }
+	handler := Handler(probe, probe, probe, nil)
+
+	ui := httptest.NewRecorder()
+	handler.ServeHTTP(ui, httptest.NewRequest(http.MethodGet, "/swagger/index.html", nil))
+	if ui.Code != http.StatusOK {
+		t.Fatalf("swagger UI status = %d, want %d", ui.Code, http.StatusOK)
+	}
+
+	document := httptest.NewRecorder()
+	handler.ServeHTTP(document, httptest.NewRequest(http.MethodGet, "/swagger/doc.json", nil))
+	if document.Code != http.StatusOK {
+		t.Fatalf("swagger document status = %d, want %d", document.Code, http.StatusOK)
+	}
+	var spec struct {
+		Swagger             string                    `json:"swagger"`
+		Paths               map[string]map[string]any `json:"paths"`
+		Definitions         map[string]any            `json:"definitions"`
+		SecurityDefinitions map[string]any            `json:"securityDefinitions"`
+	}
+	if err := json.Unmarshal(document.Body.Bytes(), &spec); err != nil {
+		t.Fatalf("decode swagger document: %v", err)
+	}
+	if spec.Swagger != "2.0" {
+		t.Fatalf("swagger version = %q, want 2.0", spec.Swagger)
+	}
+	if _, ok := spec.SecurityDefinitions["BearerAuth"]; !ok {
+		t.Fatal("swagger document is missing BearerAuth")
+	}
+	if _, ok := spec.Definitions["server.problemResponse"]; !ok {
+		t.Fatal("swagger document is missing the shared problem response schema")
+	}
+
+	expected := map[string][]string{
+		"/health/live": {"get"}, "/health/ready": {"get"},
+		"/v1/auth/login": {"post"}, "/v1/auth/refresh": {"post"}, "/v1/auth/logout": {"post"},
+		"/v1/me": {"get"}, "/v1/me/password": {"post"},
+		"/v1/banks": {"get", "post"}, "/v1/banks/{bankID}": {"get", "patch"},
+		"/v1/users": {"get", "post"}, "/v1/users/{userID}": {"get", "patch"},
+		"/v1/users/{userID}:disable": {"post"}, "/v1/users/{userID}:set-password": {"post"},
+		"/v1/banks/{bankID}/card-products":                                             {"get", "post"},
+		"/v1/banks/{bankID}/card-products/{productID}":                                 {"get", "patch"},
+		"/v1/banks/{bankID}/clients":                                                   {"get", "post"},
+		"/v1/banks/{bankID}/clients/{clientID}":                                        {"get", "patch"},
+		"/v1/banks/{bankID}/account-references":                                        {"get", "post"},
+		"/v1/banks/{bankID}/account-references/{accountReferenceID}":                   {"get", "patch"},
+		"/v1/banks/{bankID}/cards":                                                     {"get", "post"},
+		"/v1/banks/{bankID}/cards/{cardID}":                                            {"get"},
+		"/v1/banks/{bankID}/cards/{cardID}/operations":                                 {"get"},
+		"/v1/banks/{bankID}/cards/{cardID}/history":                                    {"get"},
+		"/v1/banks/{bankID}/cards/{cardID}:activate":                                   {"post"},
+		"/v1/banks/{bankID}/cards/{cardID}:suspend":                                    {"post"},
+		"/v1/banks/{bankID}/cards/{cardID}:resume":                                     {"post"},
+		"/v1/banks/{bankID}/cards/{cardID}:close":                                      {"post"},
+		"/v1/banks/{bankID}/cards/{cardID}:replace":                                    {"post"},
+		"/v1/banks/{bankID}/card-status-batches":                                       {"get", "post"},
+		"/v1/banks/{bankID}/card-status-batches/{batchID}":                             {"get"},
+		"/v1/banks/{bankID}/card-status-batches/{batchID}/items":                       {"get"},
+		"/v1/banks/{bankID}/card-status-batches/{batchID}:execute":                     {"post"},
+		"/v1/banks/{bankID}/card-status-batches/{batchID}:cancel":                      {"post"},
+		"/v1/banks/{bankID}/card-status-batches/{batchID}:retry":                       {"post"},
+		"/v1/banks/{bankID}/card-expiry-runs/{expiryRunID}/items/{expiryItemID}:retry": {"post"},
+	}
+	operations := 0
+	for path, methods := range expected {
+		documented, ok := spec.Paths[path]
+		if !ok {
+			t.Fatalf("swagger document is missing path %s", path)
+		}
+		for _, method := range methods {
+			operations++
+			if _, ok := documented[method]; !ok {
+				t.Fatalf("swagger document is missing %s %s", method, path)
+			}
+		}
+	}
+	if operations != 47 {
+		t.Fatalf("documented operation count = %d, want 47", operations)
+	}
+	if _, found := spec.Paths["/v1/authorization-verifications"]; found {
+		t.Fatal("mTLS authorization endpoint must remain outside the public swagger catalog")
 	}
 }
 

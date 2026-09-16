@@ -16,7 +16,9 @@ services:
       retries: 30
       start_period: 5s
     restart: unless-stopped
-    networks: [internal]
+    # PostgreSQL remains isolated from application traffic, but needs a
+    # non-internal bridge network for its loopback-only host port mapping.
+    networks: [internal, host-access]
 
   db-init:
     build:
@@ -151,5 +153,7 @@ volumes:
 networks:
   internal:
     internal: true
+  host-access:
+    driver: bridge
   frontend:
     driver: bridge

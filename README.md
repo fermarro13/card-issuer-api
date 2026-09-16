@@ -21,7 +21,7 @@ The API is available at [http://localhost:8080/health/live](http://localhost:808
 | `app` | Go 1.27.1 API server running as non-root with separate control/shard pools. |
 | `executor` | Independently deployable Go 1.27.1 batch/expiry daemon with internal-only operational endpoints. |
 
-Compose waits for healthy PostgreSQL and successful initialization before starting the app. `db-init` showing **Exited (0)** is expected. PostgreSQL is reachable only on the Compose network; the API is published at `127.0.0.1:8080`.
+Compose waits for healthy PostgreSQL and successful initialization before starting the app. `db-init` showing **Exited (0)** is expected. PostgreSQL is published only to this host at `127.0.0.1:5432`; the API is published at `127.0.0.1:8080`.
 
 Both databases remain distinct: `card_issuer_control` stores routing/authentication and `card_issuer_shard_01` stores bank data. Existing migrations, checksums and seeds are reused unchanged. Every new initialization run checks migration history and preserves existing accounts, passwords and data.
 
@@ -29,9 +29,9 @@ Both databases remain distinct: `card_issuer_control` stores routing/authenticat
 
 The runtime architecture below reflects the current local proof-of-concept: the public API, access control, separate control and tenant-shard databases, the independent executor, and the mTLS authorization boundary.
 
-[Open the interactive architecture diagram](https://fermarro13.github.io/card-issuer-api/)
+Select the preview to explore the interactive architecture diagram.
 
-![Card Issuer API runtime architecture](docs/diagrams/card-issuer-runtime.visual-check.1440x900.light.png)
+[![Preview of the interactive Card Issuer API runtime architecture diagram](docs/diagrams/card-issuer-runtime.visual-check.1440x900.light.png)](https://fermarro13.github.io/card-issuer-api/ "Open the interactive architecture diagram")
 
 ### Improvements out of scope
 
@@ -49,6 +49,18 @@ The following production-oriented improvements were intentionally out of scope f
 | `GET /health/ready` | 200, `{"status":"ready"}` | 503, `{"status":"not_ready"}` if either database check fails or the shared two-second deadline expires. |
 
 The application keeps running during a database outage and becomes ready again when both connections recover. Database details and credentials are excluded from HTTP responses. Each pool is limited to five connections. HTTP requests and graceful shutdown have bounded timeouts.
+
+## API documentation
+
+After the API starts, open the public interactive catalog at [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html). It documents the health, authentication, and public `/v1` resource API. Use Swagger UI's **Authorize** control to supply a `Bearer <access token>` obtained from Login before trying protected operations; the catalog itself is intentionally public.
+
+The Swagger files are generated during Docker and CI builds. Before running local Go checks after changing API annotations, generate them with:
+
+```bash
+go tool swag init -g main.go -d cmd/api,internal/server --parseInternal -o docs
+```
+
+Generated files are intentionally not committed. The network-isolated mTLS authorization-verification service and the internal executor remain outside this catalog; use the [Postman collection](postman/card-issuer-api.postman_collection.json) for the mTLS request.
 
 ## Postman
 
