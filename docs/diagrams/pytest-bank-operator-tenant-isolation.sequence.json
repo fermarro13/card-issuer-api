@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Bank Operator Tenant Isolation Functional Test",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [1200, 760]
+  },
+  "participants": [
+    { "id": "pytest", "type": "external", "label": "pytest" },
+    { "id": "issuer", "type": "external", "label": "Issuer operator" },
+    { "id": "operator_a", "type": "external", "label": "Bank A operator" },
+    { "id": "operator_b", "type": "external", "label": "Bank B operator" },
+    { "id": "api", "type": "backend", "label": "Card Issuer API" },
+    { "id": "shard", "type": "database", "label": "Bank shard" }
+  ],
+  "segments": [
+    { "from": 150, "to": 295, "label": "Create two tenants" },
+    { "from": 297, "to": 430, "label": "Seed Bank A data" },
+    { "from": 432, "to": 615, "label": "Attempt cross-tenant access" },
+    { "from": 617, "to": 665, "label": "Prove isolation" }
+  ],
+  "messages": [
+    { "from": "issuer", "to": "api", "y": 180, "label": "log in; create Bank A, Bank B and operators", "variant": "emphasis" },
+    { "from": "operator_b", "to": "api", "y": 260, "label": "log in; seed product, client, card and draft batch", "variant": "emphasis" },
+    { "from": "pytest", "to": "shard", "y": 310, "label": "snapshot Bank B issued card and draft batch", "variant": "default" },
+    { "from": "operator_a", "to": "api", "y": 370, "label": "log in as the separate Bank A operator", "variant": "emphasis" },
+    { "from": "operator_a", "to": "api", "y": 445, "label": "read Bank B products, clients, cards and batches", "variant": "security" },
+    { "from": "api", "to": "operator_a", "y": 480, "label": "403 forbidden", "variant": "return" },
+    { "from": "operator_a", "to": "api", "y": 520, "label": "mutate Bank B resources and lifecycle commands", "variant": "security" },
+    { "from": "api", "to": "operator_a", "y": 560, "label": "403 forbidden; 404 only for expiry retry", "variant": "return" },
+    { "from": "pytest", "to": "shard", "y": 630, "label": "snapshot matches before: no Bank B changes", "variant": "default" }
+  ],
+  "cards": [
+    { "dot": "rose", "title": "Isolation guarantee", "items": ["Bank operators can operate only within their assigned entity", "Thirty cross-tenant endpoint cases are rejected", "Rejected requests leave Bank B's card and batch snapshot unchanged"] }
+  ]
+}

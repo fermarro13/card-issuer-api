@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Concurrent Batch Creation and Executor Claims Functional Test",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [1200, 800]
+  },
+  "participants": [
+    { "id": "pytest", "type": "external", "label": "pytest" },
+    { "id": "operator", "type": "external", "label": "Bank operator" },
+    { "id": "clients", "type": "external", "label": "16 HTTP clients" },
+    { "id": "api", "type": "backend", "label": "Card Issuer API" },
+    { "id": "executor_a", "type": "backend", "label": "Executor A" },
+    { "id": "executor_b", "type": "backend", "label": "Executor B" },
+    { "id": "shard", "type": "database", "label": "Bank shard" }
+  ],
+  "segments": [
+    { "from": 150, "to": 305, "label": "Prepare 32 cards" },
+    { "from": 307, "to": 462, "label": "Race one batch create" },
+    { "from": 464, "to": 635, "label": "Execute eight batches" },
+    { "from": 637, "to": 710, "label": "Verify distributed claims" }
+  ],
+  "messages": [
+    { "from": "operator", "to": "api", "y": 180, "label": "create tenant resources and issue 32 cards", "variant": "emphasis" },
+    { "from": "pytest", "to": "shard", "y": 225, "label": "assert unique issued card ids", "variant": "default" },
+    { "from": "clients", "to": "api", "y": 275, "label": "16 simultaneous create-batch requests; same idempotency key", "variant": "emphasis" },
+    { "from": "api", "to": "clients", "y": 315, "label": "201 draft or 202 processing", "variant": "return" },
+    { "from": "operator", "to": "api", "y": 360, "label": "replay until completed batch response", "variant": "dashed" },
+    { "from": "pytest", "to": "shard", "y": 405, "label": "assert one idempotency record, batch, items and audit", "variant": "default" },
+    { "from": "operator", "to": "api", "y": 450, "label": "create remaining 7 batches; execute all 8", "variant": "emphasis" },
+    { "from": "api", "to": "operator", "y": 490, "label": "202 queued for every batch", "variant": "return" },
+    { "from": "executor_a", "to": "shard", "y": 540, "label": "claim work and activate assigned cards", "variant": "emphasis" },
+    { "from": "executor_b", "to": "shard", "y": 580, "label": "claim different work and activate assigned cards", "variant": "emphasis" },
+    { "from": "operator", "to": "api", "y": 625, "label": "poll every batch until succeeded", "variant": "default" },
+    { "from": "pytest", "to": "shard", "y": 670, "label": "assert one attempt, released leases and 32 active cards", "variant": "default" },
+    { "from": "pytest", "to": "shard", "y": 700, "label": "assert both executor identities own operations", "variant": "default" }
+  ],
+  "cards": [
+    { "dot": "violet", "title": "Concurrency guarantees", "items": ["One idempotency key creates exactly one batch", "Each batch is claimed once and releases its lease", "Both replicas process work while all 32 cards activate exactly once"] }
+  ]
+}

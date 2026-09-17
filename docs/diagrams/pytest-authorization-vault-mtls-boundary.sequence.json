@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Authorization Vault and mTLS Boundary Functional Test",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [1200, 820]
+  },
+  "participants": [
+    { "id": "pytest", "type": "external", "label": "pytest" },
+    { "id": "operator", "type": "external", "label": "Bank operator" },
+    { "id": "issuer", "type": "external", "label": "Issuer operator" },
+    { "id": "api", "type": "backend", "label": "Card Issuer API" },
+    { "id": "mtls", "type": "security", "label": "Authorization mTLS" },
+    { "id": "vault", "type": "security", "label": "Vault" },
+    { "id": "shard", "type": "database", "label": "Bank shard" }
+  ],
+  "segments": [
+    { "from": 150, "to": 310, "label": "Prepare eligible card" },
+    { "from": 312, "to": 465, "label": "Approve and replay" },
+    { "from": 467, "to": 645, "label": "Decline invalid or ineligible" },
+    { "from": 647, "to": 720, "label": "Reject boundary violations" }
+  ],
+  "messages": [
+    { "from": "operator", "to": "api", "y": 180, "label": "log in; issue and activate card", "variant": "emphasis" },
+    { "from": "api", "to": "vault", "y": 220, "label": "initial credential disclosure only", "variant": "security" },
+    { "from": "pytest", "to": "shard", "y": 260, "label": "assert active card setup", "variant": "default" },
+    { "from": "pytest", "to": "mtls", "y": 315, "label": "POST verification with mapped TLS client certificate", "variant": "security" },
+    { "from": "mtls", "to": "vault", "y": 355, "label": "verify credentials and mapped bank identity", "variant": "security" },
+    { "from": "mtls", "to": "pytest", "y": 395, "label": "200 approved", "variant": "return" },
+    { "from": "pytest", "to": "mtls", "y": 435, "label": "replay reference with invalid credentials", "variant": "dashed" },
+    { "from": "mtls", "to": "pytest", "y": 470, "label": "same stored approved decision", "variant": "return" },
+    { "from": "pytest", "to": "mtls", "y": 515, "label": "invalid, suspended, closed, expired, cross-bank cards", "variant": "security" },
+    { "from": "mtls", "to": "pytest", "y": 550, "label": "200 declined; safe decision code", "variant": "return" },
+    { "from": "pytest", "to": "shard", "y": 590, "label": "assert safe verification rows and one row per reference", "variant": "default" },
+    { "from": "issuer", "to": "api", "y": 635, "label": "create second bank and operator for cross-bank proof", "variant": "emphasis" },
+    { "from": "pytest", "to": "mtls", "y": 675, "label": "no certificate, unmapped certificate, body bank override", "variant": "security" },
+    { "from": "mtls", "to": "pytest", "y": 710, "label": "TLS failure / 401 / 400; no other-bank record", "variant": "return" }
+  ],
+  "cards": [
+    { "dot": "rose", "title": "Boundary guarantees", "items": ["Only a mapped mTLS client reaches authorization verification", "The reference is idempotent and decision storage excludes PAN and CVV", "Bank identity comes from certificate mapping, never the request body"] }
+  ]
+}

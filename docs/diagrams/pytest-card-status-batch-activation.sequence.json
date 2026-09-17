@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Card Status Batch Activation Functional Test",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [1200, 780]
+  },
+  "participants": [
+    { "id": "pytest", "type": "external", "label": "pytest" },
+    { "id": "issuer", "type": "external", "label": "Issuer operator" },
+    { "id": "operator", "type": "external", "label": "Bank operator" },
+    { "id": "api", "type": "backend", "label": "Card Issuer API" },
+    { "id": "executor", "type": "backend", "label": "Batch executor" },
+    { "id": "control", "type": "database", "label": "Control database" },
+    { "id": "shard", "type": "database", "label": "Bank shard" }
+  ],
+  "segments": [
+    { "from": 150, "to": 300, "label": "Provision tenant" },
+    { "from": 302, "to": 460, "label": "Prepare cards" },
+    { "from": 462, "to": 640, "label": "Queue activation" },
+    { "from": 642, "to": 690, "label": "Verify outcome" }
+  ],
+  "messages": [
+    { "from": "issuer", "to": "api", "y": 180, "label": "log in; create bank and assigned operator", "variant": "emphasis" },
+    { "from": "pytest", "to": "control", "y": 215, "label": "assert routing, users, login and provision audits", "variant": "default" },
+    { "from": "operator", "to": "api", "y": 250, "label": "log in; create product, client and account", "variant": "emphasis" },
+    { "from": "operator", "to": "api", "y": 315, "label": "issue 10 cards with idempotency keys", "variant": "emphasis" },
+    { "from": "api", "to": "operator", "y": 350, "label": "201 cards; one-time credentials", "variant": "return" },
+    { "from": "pytest", "to": "shard", "y": 390, "label": "assert issued cards, audits and idempotency", "variant": "default" },
+    { "from": "operator", "to": "api", "y": 420, "label": "create active-status batch for 10 cards", "variant": "emphasis" },
+    { "from": "operator", "to": "api", "y": 475, "label": "GET draft batch and pending items", "variant": "default" },
+    { "from": "api", "to": "operator", "y": 515, "label": "draft batch with 10 pending items", "variant": "return" },
+    { "from": "operator", "to": "api", "y": 550, "label": "execute batch", "variant": "emphasis" },
+    { "from": "api", "to": "operator", "y": 590, "label": "202 queued", "variant": "return" },
+    { "from": "executor", "to": "shard", "y": 620, "label": "claim batch; activate all cards; record operations", "variant": "emphasis" },
+    { "from": "operator", "to": "api", "y": 650, "label": "poll batch status until succeeded", "variant": "default" },
+    { "from": "pytest", "to": "shard", "y": 680, "label": "assert 10 applied, active state, history and audit", "variant": "default" }
+  ],
+  "cards": [
+    { "dot": "amber", "title": "Contract under test", "items": ["Create and execute requests each have persisted idempotency evidence", "Execution is asynchronous and reaches succeeded", "Every item has a recorded activation, history entry, and audit"] }
+  ]
+}

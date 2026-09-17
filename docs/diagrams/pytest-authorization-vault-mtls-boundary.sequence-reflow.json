@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": { "title": "Authorization Vault and mTLS Boundary Functional Test", "quality_profile": "showcase", "column_fit": "spread", "viewBox": [1200, 560] },
+  "participants": [
+    { "id": "pytest", "type": "external", "label": "pytest" }, { "id": "operator", "type": "external", "label": "Bank operator" }, { "id": "issuer", "type": "external", "label": "Issuer operator" }, { "id": "api", "type": "backend", "label": "Card Issuer API" }, { "id": "mtls", "type": "security", "label": "Authorization mTLS" }, { "id": "vault", "type": "security", "label": "Vault" }, { "id": "shard", "type": "database", "label": "Bank shard" }
+  ],
+  "segments": [
+    { "from": 150, "to": 215, "label": "Prepare" }, { "from": 217, "to": 335, "label": "Approve + replay" }, { "from": 337, "to": 425, "label": "Decline safely" }, { "from": 427, "to": 465, "label": "Reject violations" }
+  ],
+  "messages": [
+    { "from": "operator", "to": "api", "y": 170, "label": "log in; issue and activate a card", "variant": "emphasis" },
+    { "from": "api", "to": "vault", "y": 200, "label": "initial credential disclosure only", "variant": "security" },
+    { "from": "pytest", "to": "mtls", "y": 230, "label": "verify mapped certificate and active credentials", "variant": "security" },
+    { "from": "mtls", "to": "vault", "y": 260, "label": "verify credentials and mapped bank identity", "variant": "security" },
+    { "from": "mtls", "to": "pytest", "y": 290, "label": "approved decision", "variant": "return" },
+    { "from": "pytest", "to": "mtls", "y": 320, "label": "replay same reference with invalid credentials", "variant": "dashed" },
+    { "from": "mtls", "to": "pytest", "y": 350, "label": "same stored decision", "variant": "return" },
+    { "from": "pytest", "to": "mtls", "y": 380, "label": "invalid, ineligible and cross-bank cards", "variant": "security" },
+    { "from": "mtls", "to": "pytest", "y": 410, "label": "declined with safe decision code", "variant": "return" },
+    { "from": "pytest", "to": "shard", "y": 440, "label": "assert safe rows, one reference record and no other-bank row", "variant": "default" }
+  ],
+  "cards": [ { "dot": "rose", "title": "Boundary guarantees", "items": ["Only a mapped mTLS client reaches authorization verification", "The reference is idempotent and decision storage excludes PAN and CVV", "Bank identity comes from certificate mapping, never the request body"] } ]
+}
