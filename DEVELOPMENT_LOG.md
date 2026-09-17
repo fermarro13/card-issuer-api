@@ -165,3 +165,15 @@ Concise, append-only record of material project interactions and decisions. Do n
 
 - Actor · Event: Concise decision, assignment, outcome, or blocker.
 - Orchestrator · Status: Intake | Design approved | Implementing | Test gate passed | QA approved | Security approved | Complete | Blocked.
+
+## 2026-09-16 — IDEMPOTENCY-HMAC-001: Keyed idempotency fingerprints
+
+- User · Scope: Implement the approved keyed-idempotency plan using HMAC-SHA-256, distinct configuration, constructor injection, focused tests, and documentation without HTTP or database schema changes.
+- User · Compatibility decision: Do not dual-read legacy SHA-256 fingerprints; existing keys may conflict until the seven-day replay window expires.
+- Orchestrator · Plan: [Keyed Idempotency Fingerprints](docs/plans/2026-09-16-keyed-idempotency-fingerprints.md).
+- Architect · Gate: APPROVED. Preserve 32-byte storage and HTTP contracts; use one immutable process-wide fingerprinter; reject weak, reused, and production POC configuration; inject the dependency into every idempotent service.
+- Implementation · Delivered: immutable HMAC-SHA-256 fingerprinter; distinct validated idempotency configuration; bank, catalog, card, batch, and staff injection; deterministic integration composition; POC Compose wiring; README compatibility guidance; and focused security regression tests.
+- Automated tests · PASSED with Go 1.27.1: `go test -count=1 ./...`, `go test -race -count=1 ./...`, `go vet ./...`, and `gosec -tests -include=G201,G202 ./cmd/... ./internal/...`. Compose configuration parsing and `git diff --check` also passed.
+- QA · Gate: APPROVED. HTTP contracts and 32-byte persistence contracts are unchanged; constructor composition compiles across the complete suite; standard/raw Base64, invalid configuration, staff password-bearing workflows, and compatibility behavior are covered.
+- Security · Gate: APPROVED. HMAC-SHA-256 replaces unkeyed request hashing; the immutable copied key is safe for concurrent sharing; weak, reused, and production POC keys fail closed without secret disclosure; no legacy SHA-256 verifier path remains.
+- Orchestrator · Status: Complete. Existing pre-change idempotency keys retain the documented possible-conflict risk until the seven-day replay window expires.

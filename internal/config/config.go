@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
@@ -10,6 +11,8 @@ import (
 	"slices"
 	"strconv"
 )
+
+const publicDevelopmentIdempotencyKeyB64 = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
 
 type Config struct {
 	Environment         string
@@ -21,6 +24,7 @@ type Config struct {
 	ShardURL            string
 	ShardID             string
 	CursorKey           []byte
+	IdempotencyKey      []byte
 	JWTPrivateKey       ed25519.PrivateKey
 	JWTIssuer           string
 	JWTAudience         string
@@ -103,6 +107,19 @@ func load(getenv func(string) string) (Config, error) {
 	if err != nil || len(cursorKey) < 32 {
 		return Config{}, errors.New("invalid API_CURSOR_HMAC_KEY_B64")
 	}
+	idempotencyKey, err := base64.RawStdEncoding.DecodeString(getenv("API_IDEMPOTENCY_HMAC_KEY_B64"))
+	if err != nil {
+		idempotencyKey, err = base64.StdEncoding.DecodeString(getenv("API_IDEMPOTENCY_HMAC_KEY_B64"))
+	}
+	if err != nil || len(idempotencyKey) < 32 {
+		return Config{}, errors.New("invalid API_IDEMPOTENCY_HMAC_KEY_B64")
+	}
+	if bytes.Equal(idempotencyKey, cursorKey) {
+		return Config{}, errors.New("API_IDEMPOTENCY_HMAC_KEY_B64 must differ from API_CURSOR_HMAC_KEY_B64")
+	}
+	if environment == "production" && base64.RawStdEncoding.EncodeToString(idempotencyKey) == publicDevelopmentIdempotencyKeyB64 {
+		return Config{}, errors.New("public development API_IDEMPOTENCY_HMAC_KEY_B64 is not allowed in production")
+	}
 	privateKey, err := base64.RawStdEncoding.DecodeString(getenv("AUTH_JWT_PRIVATE_KEY_B64"))
 	if err != nil {
 		privateKey, err = base64.StdEncoding.DecodeString(getenv("AUTH_JWT_PRIVATE_KEY_B64"))
@@ -115,7 +132,7 @@ func load(getenv func(string) string) (Config, error) {
 	if issuer == "" || audience == "" {
 		return Config{}, errors.New("AUTH_JWT_ISSUER and AUTH_JWT_AUDIENCE are required")
 	}
-	return Config{Environment: environment, VaultMode: vaultMode, DevelopmentVaultURL: developmentVaultURL, HTTPAddress: address, AuthURL: auth, ControlURL: control, ShardURL: shard, ShardID: shardID, CursorKey: cursorKey, JWTPrivateKey: ed25519.PrivateKey(privateKey), JWTIssuer: issuer, JWTAudience: audience}, nil
+	return Config{Environment: environment, VaultMode: vaultMode, DevelopmentVaultURL: developmentVaultURL, HTTPAddress: address, AuthURL: auth, ControlURL: control, ShardURL: shard, ShardID: shardID, CursorKey: cursorKey, IdempotencyKey: idempotencyKey, JWTPrivateKey: ed25519.PrivateKey(privateKey), JWTIssuer: issuer, JWTAudience: audience}, nil
 }
 
 // DevVaultConfig is the minimal configuration needed by cmd/devvault.

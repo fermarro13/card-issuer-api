@@ -27,13 +27,14 @@ const (
 )
 
 type Service struct {
-	reader Store
-	vault  vault.CredentialVault
-	now    func() time.Time
+	reader        Store
+	vault         vault.CredentialVault
+	fingerprinter *idempotency.Fingerprinter
+	now           func() time.Time
 }
 
-func New(reader Store, credentialVault vault.CredentialVault) *Service {
-	return &Service{reader: reader, vault: credentialVault, now: time.Now}
+func New(reader Store, credentialVault vault.CredentialVault, fingerprinter *idempotency.Fingerprinter) *Service {
+	return &Service{reader: reader, vault: credentialVault, fingerprinter: fingerprinter, now: time.Now}
 }
 
 func (s *Service) ListCards(ctx context.Context, bank, clientID, accountID, productID, status string) ([]json.RawMessage, error) {
@@ -262,7 +263,7 @@ func (s *Service) RetryExpiryWorkflow(ctx context.Context, principal auth.Princi
 
 func (s *Service) claim(ctx context.Context, tx Transaction, bank, scope, key string, body []byte) (json.RawMessage, int, bool, error) {
 	now := s.now().UTC()
-	replay, err := tx.ClaimIdempotency(ctx, domain.ShardIdempotencyClaim{Bank: bank, Scope: scope, Key: key, Fingerprint: idempotency.Fingerprint(body), Now: now, ExpiresAt: now.Add(replayLifetime)})
+	replay, err := tx.ClaimIdempotency(ctx, domain.ShardIdempotencyClaim{Bank: bank, Scope: scope, Key: key, Fingerprint: s.fingerprinter.Fingerprint(body), Now: now, ExpiresAt: now.Add(replayLifetime)})
 	if errors.Is(err, domain.ErrIdempotencyConflict) {
 		return nil, 0, false, problem(statusConflict, "idempotency_conflict", "Idempotency-Key was previously used for a different request.")
 	}

@@ -24,6 +24,7 @@ import (
 	"card-issuer-api/internal/catalog"
 	"card-issuer-api/internal/database"
 	"card-issuer-api/internal/executor"
+	"card-issuer-api/internal/idempotency"
 	authrepository "card-issuer-api/internal/repository/auth"
 	controlrepository "card-issuer-api/internal/repository/control"
 	routingrepository "card-issuer-api/internal/repository/routing"
@@ -41,6 +42,15 @@ func testVault(t *testing.T) *vault.InMemory {
 		t.Fatal(err)
 	}
 	return credentialVault
+}
+
+func testFingerprinter(t *testing.T) *idempotency.Fingerprinter {
+	t.Helper()
+	fingerprinter, err := idempotency.NewFingerprinter(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fingerprinter
 }
 
 func TestRuntimeDatabaseEnvironment(t *testing.T) {
@@ -349,13 +359,14 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 			t.Fatal(err)
 		}
 		routes := routingrepository.New(control)
+		fingerprinter := testFingerprinter(t)
 		handler := server.Handler(authPool.Ping, control.Ping, shard.Ping, service, server.NewResourceHandler(service, server.Dependencies{
-			Bank:    bank.New(controlrepository.NewBank(authPool), routes, shardrepository.NewBank(shard), "shard_01"),
+			Bank:    bank.New(controlrepository.NewBank(authPool), routes, shardrepository.NewBank(shard), "shard_01", fingerprinter),
 			Access:  tenant.New(routes, "shard_01"),
-			Catalog: catalog.New(shardrepository.NewCatalog(shard)),
-			Card:    card.New(shardrepository.NewCard(shard), testVault(t)),
-			Batch:   batch.New(shardrepository.NewBatch(shard)),
-			Staff:   staff.New(controlrepository.NewStaff(authPool), routes, "shard_01"),
+			Catalog: catalog.New(shardrepository.NewCatalog(shard), fingerprinter),
+			Card:    card.New(shardrepository.NewCard(shard), testVault(t), fingerprinter),
+			Batch:   batch.New(shardrepository.NewBatch(shard), fingerprinter),
+			Staff:   staff.New(controlrepository.NewStaff(authPool), routes, "shard_01", fingerprinter),
 		}, []byte("integration-cursor-key")))
 		request := func(method, path, body, key string) *httptest.ResponseRecorder {
 			r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -599,7 +610,7 @@ func TestRuntimeDatabaseEnvironment(t *testing.T) {
 		if aggregate := shardSQL("SET ROLE ci_owner; SET LOCAL app.entity_id='" + bankID + "'; SELECT expired_count::text||','||manual_retry_required_count::text FROM bank.card_expiry_runs WHERE id='" + retry.RunID + "';"); aggregate != "1,1" {
 			t.Fatalf("expiry aggregate = %s", aggregate)
 		}
-		retryService := card.New(shardrepository.NewCard(shard), testVault(t))
+		retryService := card.New(shardrepository.NewCard(shard), testVault(t), testFingerprinter(t))
 		principal := auth.Principal{UserID: "20000000-0000-4000-8000-000000000001", Role: "issuer_operator"}
 		for range 2 {
 			if err := retryService.RetryExpiryWorkflow(ctx, principal, bankID, retry.RunID, retry.ID, "executor-manual-retry", []byte(`{"reason":"manual retry"}`), "manual retry", "90000000-0000-4000-8000-000000000199"); err != nil {

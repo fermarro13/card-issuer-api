@@ -2,6 +2,7 @@
 
 | Date | Plan | Status |
 | --- | --- | --- |
+| 2026-09-16 | [Keyed Idempotency Fingerprints](2026-09-16-keyed-idempotency-fingerprints.md) | Complete; architect, automated, QA, and security gates approved |
 | 2026-09-15 | [Local Authorization Verification Environment](2026-09-15-local-authorization-verification.md) | Delivered; automated and Compose acceptance passed; independent architect, QA, and security review pending |
 | 2026-09-15 | [Issuer Authorization Vault and Credential Verifier](2026-09-15-issuer-authorization-vault-and-credential-verifier.md) | Delivered; local mTLS/Compose acceptance passed; QA and security review pending; production vault/HSM and PKI remain external prerequisites |
 | 2026-09-14 | [Batch Executor](2026-09-14-batch-executor.md) | Complete; architect, QA, security, and all automated acceptance gates approved |

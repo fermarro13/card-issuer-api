@@ -10,6 +10,8 @@ Use Docker Desktop with Linux containers on Windows or macOS, or Docker Engine w
 
 Compose includes a deliberately public base64-encoded 64-byte Ed25519 development key, so no JWT setup is required for local POC startup. **It must never be used in production.** Production deployments must inject a unique `AUTH_JWT_PRIVATE_KEY_B64` through their secret configuration. `AUTH_JWT_ISSUER` and `AUTH_JWT_AUDIENCE` default to `card-issuer-api` and should be set explicitly in production.
 
+Compose also includes the deliberately public `API_IDEMPOTENCY_HMAC_KEY_B64` development value from `.env.example` for POC startup only. Production must inject a unique secret with at least 32 decoded bytes, and it must differ from `API_CURSOR_HMAC_KEY_B64`. Existing idempotency keys created before the HMAC change may conflict until their seven-day replay window expires.
+
 The API is available at [http://localhost:8080/health/live](http://localhost:8080/health/live). [Readiness](http://localhost:8080/health/ready) checks the authentication, routing, and shard database connections. The separate mTLS authorization service is published only to this machine at `https://localhost:8443`.
 
 ## What starts
@@ -87,7 +89,7 @@ The following deliberately public database defaults support local POC startup:
 
 The app receives three separate runtime passwords. Runtime accounts have no ownership, role/database creation, superuser, replication or RLS bypass privileges.
 
-Copy `.env.example` to `.env` only when you want to override the API port, database names, shard ID, technical passwords, executor tuning, or the POC JWT key. `.env` is ignored by Git and excluded from image builds. The default `EXECUTOR_ID` is `executor-dev-01` for a single local executor; set a unique value for every executor replica outside that simple setup. Set a unique `AUTH_JWT_PRIVATE_KEY_B64` from secret configuration in every production deployment; never use the committed POC key.
+Copy `.env.example` to `.env` only when you want to override the API port, database names, shard ID, technical passwords, executor tuning, or the POC keys. `.env` is ignored by Git and excluded from image builds. The default `EXECUTOR_ID` is `executor-dev-01` for a single local executor; set a unique value for every executor replica outside that simple setup. Set unique `AUTH_JWT_PRIVATE_KEY_B64` and `API_IDEMPOTENCY_HMAC_KEY_B64` values from secret configuration in every production deployment; never use the committed POC values, and keep the idempotency key distinct from the cursor key.
 
 **Existing volumes retain passwords.** Changing `POSTGRES_PASSWORD` in `.env` does not change an initialized PostgreSQL administrator password. Runtime account provisioning also preserves existing technical passwords and verifies the supplied credentials; a mismatch fails initialization. To change a password while preserving data, use an authenticated administrator session and psql's `\password account_name`, then update `.env` to match. Application staff passwords are likewise never reset by seeds.
 

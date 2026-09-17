@@ -17,6 +17,7 @@ import (
 	"card-issuer-api/internal/catalog"
 	"card-issuer-api/internal/config"
 	"card-issuer-api/internal/database"
+	"card-issuer-api/internal/idempotency"
 	authrepository "card-issuer-api/internal/repository/auth"
 	controlrepository "card-issuer-api/internal/repository/control"
 	routingrepository "card-issuer-api/internal/repository/routing"
@@ -52,6 +53,11 @@ func run(logger *slog.Logger) int {
 		logger.Error("invalid application configuration", "reason", err.Error())
 		return 1
 	}
+	fingerprinter, err := idempotency.NewFingerprinter(cfg.IdempotencyKey)
+	if err != nil {
+		logger.Error("invalid idempotency configuration")
+		return 1
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	signer, err := auth.NewSigner(cfg.JWTPrivateKey, cfg.JWTIssuer, cfg.JWTAudience)
@@ -84,8 +90,8 @@ func run(logger *slog.Logger) int {
 	}
 	logger.Info("HTTP server started", "address", listener.Addr().String())
 	authentication := auth.NewService(authrepository.New(authPool), signer)
-	banks := bank.New(controlrepository.NewBank(authPool), routingrepository.New(control), shardrepository.NewBank(shard), cfg.ShardID)
-	catalogService := catalog.New(shardrepository.NewCatalog(shard))
+	banks := bank.New(controlrepository.NewBank(authPool), routingrepository.New(control), shardrepository.NewBank(shard), cfg.ShardID, fingerprinter)
+	catalogService := catalog.New(shardrepository.NewCatalog(shard), fingerprinter)
 	if cfg.VaultMode != "development" {
 		logger.Error("external credential vault provisioning is required")
 		return 1
@@ -95,9 +101,9 @@ func run(logger *slog.Logger) int {
 		logger.Error("credential vault initialization failed")
 		return 1
 	}
-	cardService := card.New(shardrepository.NewCard(shard), credentialVault)
-	batchService := batch.New(shardrepository.NewBatch(shard))
-	staffService := staff.New(controlrepository.NewStaff(authPool), routingrepository.New(control), cfg.ShardID)
+	cardService := card.New(shardrepository.NewCard(shard), credentialVault, fingerprinter)
+	batchService := batch.New(shardrepository.NewBatch(shard), fingerprinter)
+	staffService := staff.New(controlrepository.NewStaff(authPool), routingrepository.New(control), cfg.ShardID, fingerprinter)
 	bankAccess := tenant.New(routingrepository.New(control), cfg.ShardID)
 	resourceHandler := server.NewResourceHandler(authentication, server.Dependencies{
 		Bank:    banks,

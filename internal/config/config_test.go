@@ -1,12 +1,71 @@
 package config
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"net/url"
 	"strings"
 	"testing"
 )
+
+func TestIdempotencyKeyAcceptsStandardAndRawBase64(t *testing.T) {
+	key := bytes.Repeat([]byte{0x7f}, 32)
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{name: "standard", value: base64.StdEncoding.EncodeToString(key)},
+		{name: "raw", value: base64.RawStdEncoding.EncodeToString(key)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := validValues()
+			values["API_IDEMPOTENCY_HMAC_KEY_B64"] = tc.value
+			cfg, err := load(func(key string) string { return values[key] })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(cfg.IdempotencyKey, key) {
+				t.Fatal("decoded idempotency key was not preserved")
+			}
+		})
+	}
+}
+
+func TestInvalidIdempotencyKeysAreRejectedWithoutDisclosure(t *testing.T) {
+	reusedKey := bytes.Repeat([]byte{0x55}, 32)
+	cursorKey := base64.RawStdEncoding.EncodeToString(reusedKey)
+	for _, tc := range []struct {
+		name        string
+		environment string
+		value       string
+		reuseCursor bool
+	}{
+		{name: "missing"},
+		{name: "malformed", value: "sensitive:not-base64"},
+		{name: "short", value: base64.RawStdEncoding.EncodeToString([]byte("sensitive-short-key"))},
+		{name: "reused cursor key", value: base64.StdEncoding.EncodeToString(reusedKey), reuseCursor: true},
+		{name: "public development key in production", environment: "production", value: publicDevelopmentIdempotencyKeyB64},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := validValues()
+			values["API_IDEMPOTENCY_HMAC_KEY_B64"] = tc.value
+			if tc.environment != "" {
+				values["APP_ENV"] = tc.environment
+			}
+			if tc.reuseCursor {
+				values["API_CURSOR_HMAC_KEY_B64"] = cursorKey
+			}
+			_, err := load(func(key string) string { return values[key] })
+			if err == nil {
+				t.Fatal("invalid idempotency key was accepted")
+			}
+			if tc.value != "" && strings.Contains(err.Error(), tc.value) {
+				t.Fatal("configuration error disclosed the supplied key")
+			}
+		})
+	}
+}
 
 func TestDatabaseCredentialsAreEncoded(t *testing.T) {
 	values := validValues()
@@ -100,8 +159,9 @@ func validValues() map[string]string {
 		"CONTROL_DB_PASSWORD": "control", "AUTH_DB_PASSWORD": "auth", "SHARD_DB_PASSWORD": "shard",
 		"AUTH_JWT_PRIVATE_KEY_B64": base64.RawStdEncoding.EncodeToString(ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))),
 		"AUTH_JWT_ISSUER":          "issuer", "AUTH_JWT_AUDIENCE": "audience",
-		"API_CURSOR_HMAC_KEY_B64": base64.RawStdEncoding.EncodeToString(make([]byte, 32)),
-		"TEST_VAULT_KEY_B64":      base64.RawStdEncoding.EncodeToString(make([]byte, 32)),
+		"API_CURSOR_HMAC_KEY_B64":      base64.RawStdEncoding.EncodeToString(make([]byte, 32)),
+		"API_IDEMPOTENCY_HMAC_KEY_B64": base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte{0x02}, 32)),
+		"TEST_VAULT_KEY_B64":           base64.RawStdEncoding.EncodeToString(make([]byte, 32)),
 	}
 }
 

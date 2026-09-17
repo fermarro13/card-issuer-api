@@ -24,13 +24,14 @@ const (
 )
 
 type Service struct {
-	control DirectoryStore
-	tenant  *tenant.Service
-	now     func() time.Time
+	control       DirectoryStore
+	tenant        *tenant.Service
+	fingerprinter *idempotency.Fingerprinter
+	now           func() time.Time
 }
 
-func New(control DirectoryStore, routes RouteStore, shardID string) *Service {
-	return &Service{control: control, tenant: tenant.New(routes, shardID), now: time.Now}
+func New(control DirectoryStore, routes RouteStore, shardID string, fingerprinter *idempotency.Fingerprinter) *Service {
+	return &Service{control: control, tenant: tenant.New(routes, shardID), fingerprinter: fingerprinter, now: time.Now}
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]json.RawMessage, error) {
@@ -177,7 +178,7 @@ func (s *Service) SetUserPasswordWorkflow(ctx context.Context, principal auth.Pr
 
 func (s *Service) centralIdempotency(ctx context.Context, tx Transaction, scope, key string, body []byte) (json.RawMessage, bool, error) {
 	now := s.now().UTC()
-	replay, err := tx.ClaimIdempotency(ctx, domain.CentralIdempotencyClaim{Scope: scope, Key: key, Fingerprint: idempotency.Fingerprint(body), Now: now, ExpiresAt: now.Add(replayLifetime)})
+	replay, err := tx.ClaimIdempotency(ctx, domain.CentralIdempotencyClaim{Scope: scope, Key: key, Fingerprint: s.fingerprinter.Fingerprint(body), Now: now, ExpiresAt: now.Add(replayLifetime)})
 	if errors.Is(err, domain.ErrIdempotencyConflict) {
 		return nil, false, problem(statusConflict, "idempotency_conflict", "Idempotency-Key was previously used for a different request.")
 	}

@@ -30,11 +30,14 @@ const (
 )
 
 type Service struct {
-	reader Store
-	now    func() time.Time
+	reader        Store
+	fingerprinter *idempotency.Fingerprinter
+	now           func() time.Time
 }
 
-func New(reader Store) *Service { return &Service{reader: reader, now: time.Now} }
+func New(reader Store, fingerprinter *idempotency.Fingerprinter) *Service {
+	return &Service{reader: reader, fingerprinter: fingerprinter, now: time.Now}
+}
 
 type response struct {
 	domain.CardStatusBatch
@@ -206,7 +209,7 @@ func (s *Service) change(ctx context.Context, principal auth.Principal, bank, id
 
 func (s *Service) claim(ctx context.Context, tx Transaction, bank, scope, key string, body []byte) (domain.ShardIdempotencyReplay, error) {
 	now := s.now().UTC()
-	replay, err := tx.ClaimIdempotency(ctx, domain.ShardIdempotencyClaim{Bank: bank, Scope: scope, Key: key, Fingerprint: idempotency.Fingerprint(body), Now: now, ExpiresAt: now.Add(replayLifetime)})
+	replay, err := tx.ClaimIdempotency(ctx, domain.ShardIdempotencyClaim{Bank: bank, Scope: scope, Key: key, Fingerprint: s.fingerprinter.Fingerprint(body), Now: now, ExpiresAt: now.Add(replayLifetime)})
 	if errors.Is(err, domain.ErrIdempotencyConflict) {
 		return domain.ShardIdempotencyReplay{}, problem(statusConflict, "idempotency_conflict", "Idempotency-Key was previously used for a different request.")
 	}
