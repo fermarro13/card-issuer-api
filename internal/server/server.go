@@ -19,6 +19,11 @@ type Probe func(context.Context) error
 const ReadinessTimeout = 2 * time.Second
 
 func Handler(authProbe, control, shard Probe, authentication auth.API, business ...http.Handler) http.Handler {
+	return HandlerWithLoginAttemptLimit(authProbe, control, shard, authentication, defaultLoginAttemptLimit, business...)
+}
+
+// HandlerWithLoginAttemptLimit builds the API handler with a bounded per-source login limit.
+func HandlerWithLoginAttemptLimit(authProbe, control, shard Probe, authentication auth.API, loginAttemptLimit int, business ...http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/swagger/", httpSwagger.Handler())
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { respond(w, http.StatusOK, "ok") })
@@ -48,7 +53,7 @@ func Handler(authProbe, control, shard Probe, authentication auth.API, business 
 		respond(w, http.StatusOK, "ready")
 	})
 	if authentication != nil {
-		authHandler := authenticationHandler{service: authentication}
+		authHandler := authenticationHandler{service: authentication, admission: newLoginAdmissionWithLimit(loginAttemptLimit)}
 		mux.HandleFunc("/v1/auth/login", authHandler.login)
 		mux.HandleFunc("/v1/auth/refresh", authHandler.refresh)
 		mux.HandleFunc("/v1/auth/logout", authHandler.logout)

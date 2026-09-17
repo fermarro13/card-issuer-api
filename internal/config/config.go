@@ -19,6 +19,7 @@ type Config struct {
 	VaultMode           string
 	DevelopmentVaultURL string
 	HTTPAddress         string
+	LoginAttemptLimit   int
 	AuthURL             string
 	ControlURL          string
 	ShardURL            string
@@ -63,6 +64,10 @@ func load(getenv func(string) string) (Config, error) {
 	}
 	if _, _, err := net.SplitHostPort(address); err != nil {
 		return Config{}, errors.New("invalid HTTP_ADDR")
+	}
+	loginAttemptLimit, err := strconv.Atoi(value("LOGIN_ATTEMPT_LIMIT_PER_MINUTE", "5"))
+	if err != nil || loginAttemptLimit < 1 || loginAttemptLimit > 1000 {
+		return Config{}, errors.New("invalid LOGIN_ATTEMPT_LIMIT_PER_MINUTE")
 	}
 	port := value("PGPORT", "5432")
 	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
@@ -132,7 +137,7 @@ func load(getenv func(string) string) (Config, error) {
 	if issuer == "" || audience == "" {
 		return Config{}, errors.New("AUTH_JWT_ISSUER and AUTH_JWT_AUDIENCE are required")
 	}
-	return Config{Environment: environment, VaultMode: vaultMode, DevelopmentVaultURL: developmentVaultURL, HTTPAddress: address, AuthURL: auth, ControlURL: control, ShardURL: shard, ShardID: shardID, CursorKey: cursorKey, IdempotencyKey: idempotencyKey, JWTPrivateKey: ed25519.PrivateKey(privateKey), JWTIssuer: issuer, JWTAudience: audience}, nil
+	return Config{Environment: environment, VaultMode: vaultMode, DevelopmentVaultURL: developmentVaultURL, HTTPAddress: address, LoginAttemptLimit: loginAttemptLimit, AuthURL: auth, ControlURL: control, ShardURL: shard, ShardID: shardID, CursorKey: cursorKey, IdempotencyKey: idempotencyKey, JWTPrivateKey: ed25519.PrivateKey(privateKey), JWTIssuer: issuer, JWTAudience: audience}, nil
 }
 
 // DevVaultConfig is the minimal configuration needed by cmd/devvault.

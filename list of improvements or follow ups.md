@@ -189,6 +189,25 @@ No fuzz targets exist. Good low-cost candidates are:
 - Batch normalization: no panic, order-independent canonicalization, and
   duplicate rejection.
 
+### 9. Submit large card-status batches by state, not by card-ID list
+
+Priority: high for bulk lifecycle operations.
+
+Deprecate `POST /v1/banks/{bankID}/card-status-batches`, whose `card_ids`
+request body places an artificial API payload and item-count ceiling on bulk
+operations. Replace it with a bodyless batch-submission endpoint whose path
+identifies the bank, source card status, and target card status; it returns
+`202 Accepted` once durable asynchronous work has been accepted.
+
+The executor daemon should retrieve eligible cards from the tenant shard and
+perform the status transition asynchronously. This removes the need for a
+client to upload a large card-ID list, while retaining tenant isolation,
+authorization, idempotency, auditing, retry/lease fencing, and observable
+batch progress. The implementation plan must define selection semantics
+(snapshot at submission versus cards matching the source status at execution),
+the deprecation/migration window for the old endpoint, and functional coverage
+for a multi-thousand-card scenario.
+
 ## Evidence-driven performance work
 
 No benchmark or fuzz targets currently exist. Do not introduce micro-
@@ -228,4 +247,3 @@ lease fencing.
   with mutexes/typed atomics.
 - Readiness fan-out is buffered correctly and cancellation-aware.
 - Vault maps are synchronized and certificate mappings are copied before use.
-

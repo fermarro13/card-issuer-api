@@ -78,7 +78,7 @@ The service records a tenant-scoped, unique transaction-reference decision with 
 
 | Method and path | Request | Result |
 | --- | --- | --- |
-| `POST /v1/auth/login` | `username`, `password` | `200` with access token and user summary; sets the refresh-token cookie. |
+| `POST /v1/auth/login` | `username`, `password` | `200` with access token and user summary; sets the refresh-token cookie. A direct source IP is limited to `LOGIN_ATTEMPT_LIMIT_PER_MINUTE` attempts per one-minute window (default `5`); excess requests return `429 login_rate_limited` with `Retry-After`. Passwords must not exceed 1,024 bytes. The Compose development stack sets the limit to `100` because its functional tests share one source IP. |
 | `POST /v1/auth/refresh` | Refresh cookie | `200` with a new access token; rotates the refresh cookie. |
 | `POST /v1/auth/logout` | Refresh cookie | `204`; revokes the current refresh session and clears the cookie. |
 | `GET /v1/me` | Access token | `200` with the authenticated user summary. |

@@ -14,6 +14,8 @@ import (
 )
 
 const (
+	// MaxPasswordBytes bounds authentication and password-change work before Argon2 processing.
+	MaxPasswordBytes = 1024
 	argonMemory      = 19456
 	argonIterations  = 2
 	argonParallelism = 1
@@ -21,7 +23,7 @@ const (
 )
 
 func ValidateNewPassword(password string) error {
-	if len(password) > 1024 || utf8RuneCount(password) < 13 {
+	if len(password) > MaxPasswordBytes || utf8RuneCount(password) < 13 {
 		return ErrPasswordPolicy
 	}
 	var upper, number, symbol bool
@@ -41,7 +43,7 @@ func utf8RuneCount(value string) int {
 }
 
 func HashPassword(password string) (string, error) {
-	if len(password) > 1024 {
+	if len(password) > MaxPasswordBytes {
 		return "", ErrPasswordPolicy
 	}
 	salt := make([]byte, 16)

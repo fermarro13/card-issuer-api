@@ -109,6 +109,36 @@ func TestInvalidConfigurationDoesNotExposeCredentials(t *testing.T) {
 	}
 }
 
+func TestLoginAttemptLimitConfiguration(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value string
+		want  int
+		valid bool
+	}{
+		{name: "default", want: 5, valid: true},
+		{name: "configured", value: "100", want: 100, valid: true},
+		{name: "zero", value: "0"},
+		{name: "too large", value: "1001"},
+		{name: "not a number", value: "secret"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			values := validValues()
+			values["LOGIN_ATTEMPT_LIMIT_PER_MINUTE"] = test.value
+			cfg, err := load(func(key string) string { return values[key] })
+			if test.valid {
+				if err != nil || cfg.LoginAttemptLimit != test.want {
+					t.Fatalf("configuration = %#v, %v", cfg, err)
+				}
+				return
+			}
+			if err == nil || strings.Contains(err.Error(), test.value) {
+				t.Fatalf("unexpected configuration error: %v", err)
+			}
+		})
+	}
+}
+
 func TestDevelopmentVaultIsRejectedOutsideDevelopmentAndTest(t *testing.T) {
 	values := validValues()
 	values["APP_ENV"] = "production"

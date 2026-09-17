@@ -8,7 +8,7 @@ import httpx
 import psycopg
 
 
-CARD_COUNT = 10
+CARD_COUNT = 150
 BATCH_REASON = "functional batch activation"
 SENSITIVE_RESPONSE_FIELDS = frozenset({"pan", "cvv", "credentials", "credential_reference"})
 
@@ -240,6 +240,7 @@ def test_card_status_batch_activation() -> None:
         assert isinstance(account_create, Mutation)
 
         card_ids: list[str] = []
+        print(f"CARD_COUNT {CARD_COUNT}")
         for index in range(CARD_COUNT):
             issue = api.request(
                 "POST",

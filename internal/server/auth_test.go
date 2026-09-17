@@ -85,9 +85,11 @@ type fakeAuth struct {
 	logoutErr    error
 	changed      bool
 	passwordErr  error
+	loginCalls   int
 }
 
 func (f *fakeAuth) Login(context.Context, string, string, string) (auth.TokenResponse, string, time.Time, error) {
+	f.loginCalls++
 	return f.response, f.refreshToken, f.expiresAt, f.loginErr
 }
 func (f *fakeAuth) Refresh(context.Context, string, string) (auth.TokenResponse, string, time.Time, error) {
@@ -187,5 +189,74 @@ func TestAuthenticationEndpointErrorContracts(t *testing.T) {
 	handler.ServeHTTP(passwordResponse, password)
 	if passwordResponse.Code != http.StatusBadRequest || !strings.Contains(passwordResponse.Body.String(), "invalid_password") {
 		t.Fatalf("unexpected password error: %d %s", passwordResponse.Code, passwordResponse.Body.String())
+	}
+}
+
+func TestLoginAdmissionLimitsEachSourceIP(t *testing.T) {
+	fake := &fakeAuth{response: auth.TokenResponse{AccessToken: "access"}, refreshToken: "refresh", expiresAt: time.Now().Add(time.Hour)}
+	handler := Handler(func(context.Context) error { return nil }, func(context.Context) error { return nil }, func(context.Context) error { return nil }, fake)
+	for range defaultLoginAttemptLimit {
+		request := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"username":"operator","password":"password"}`))
+		request.RemoteAddr = "192.0.2.1:1234"
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("login response = %d, want %d", response.Code, http.StatusOK)
+		}
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"username":"operator","password":"password"}`))
+	request.RemoteAddr = "192.0.2.1:9876"
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "60" || !strings.Contains(response.Body.String(), "login_rate_limited") || fake.loginCalls != defaultLoginAttemptLimit {
+		t.Fatalf("unexpected limited login: status=%d retry-after=%q calls=%d body=%s", response.Code, response.Header().Get("Retry-After"), fake.loginCalls, response.Body.String())
+	}
+}
+
+func TestLoginAdmissionCanUseConfiguredLimit(t *testing.T) {
+	fake := &fakeAuth{response: auth.TokenResponse{AccessToken: "access"}, refreshToken: "refresh", expiresAt: time.Now().Add(time.Hour)}
+	handler := HandlerWithLoginAttemptLimit(func(context.Context) error { return nil }, func(context.Context) error { return nil }, func(context.Context) error { return nil }, fake, 7)
+	for range 7 {
+		request := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"username":"operator","password":"password"}`))
+		request.RemoteAddr = "192.0.2.1:1234"
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("login response = %d, want %d", response.Code, http.StatusOK)
+		}
+	}
+}
+
+func TestLoginRejectsOversizedPasswordBeforeAuthentication(t *testing.T) {
+	fake := &fakeAuth{}
+	handler := Handler(func(context.Context) error { return nil }, func(context.Context) error { return nil }, func(context.Context) error { return nil }, fake)
+	password := strings.Repeat("a", auth.MaxPasswordBytes+1)
+	request := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"username":"operator","password":"`+password+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_request") || fake.loginCalls != 0 {
+		t.Fatalf("unexpected oversized login: status=%d calls=%d body=%s", response.Code, fake.loginCalls, response.Body.String())
+	}
+}
+
+func TestRetryAfterSecondsRoundsUp(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value time.Duration
+		want  int64
+	}{
+		{name: "one minute", value: time.Minute, want: 60},
+		{name: "fractional second", value: time.Second + time.Nanosecond, want: 2},
+		{name: "nonpositive", value: 0, want: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := retryAfterSeconds(test.value); got != test.want {
+				t.Fatalf("retryAfterSeconds(%s) = %d, want %d", test.value, got, test.want)
+			}
+		})
 	}
 }

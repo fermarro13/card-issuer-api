@@ -159,10 +159,10 @@ The optional pytest container exercises the running Compose API and verifies per
 After starting a freshly initialized stack, run:
 
 ```powershell
-docker compose --profile functional run --rm functional-tests
+docker compose --profile functional run --rm --no-deps functional-tests
 ```
 
-This run includes the unskipped issue → activate → mTLS authorization scenario. It uses the generated files mounted read-only and fails if the vault, PKI, or authorization service is unavailable. The full Compose smoke scripts additionally run a two-replica executor contention scenario and a concurrent idempotent batch-create test; the replica-specific pytest case is skipped when the `FUNCTIONAL_EXECUTOR_IDENTITIES` setting is absent.
+This run includes the unskipped issue → activate → mTLS authorization scenario. `--no-deps` runs against the already healthy Compose stack without recreating its services. It uses the generated files mounted read-only and fails if the vault, PKI, or authorization service is unavailable. The full Compose smoke scripts additionally run a two-replica executor contention scenario and a concurrent idempotent batch-create test; the replica-specific pytest case is skipped when the `FUNCTIONAL_EXECUTOR_IDENTITIES` setting is absent.
 
 The `functional` profile is not started by ordinary `docker compose up`.
 

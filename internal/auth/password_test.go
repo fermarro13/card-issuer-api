@@ -32,3 +32,20 @@ func TestArgon2IDHashesVerifySeedCompatibility(t *testing.T) {
 		t.Fatalf("generated hash did not verify: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestPasswordFunctionsRejectOversizedPasswords(t *testing.T) {
+	password := string(make([]byte, MaxPasswordBytes+1))
+	if err := ValidateNewPassword(password); err != ErrPasswordPolicy {
+		t.Fatalf("validation error = %v, want %v", err, ErrPasswordPolicy)
+	}
+	if _, err := HashPassword(password); err != ErrPasswordPolicy {
+		t.Fatalf("hash error = %v, want %v", err, ErrPasswordPolicy)
+	}
+}
+
+func TestDummyPasswordHashUsesSupportedParameters(t *testing.T) {
+	valid, err := VerifyPassword(dummyPasswordHash, "not-the-dummy-password")
+	if err != nil || valid {
+		t.Fatalf("dummy password hash verification = valid:%v err:%v", valid, err)
+	}
+}

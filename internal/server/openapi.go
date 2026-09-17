@@ -32,7 +32,7 @@ type tokenResponse struct {
 
 type openAPILoginRequest struct {
 	Username string `json:"username" example:"issuer_operator" minLength:"1"`
-	Password string `json:"password" minLength:"1"`
+	Password string `json:"password" minLength:"1" maxLength:"1024"`
 }
 
 type changePasswordRequest struct {
@@ -303,14 +303,16 @@ func ReadyHealth() {}
 
 // Login godoc
 // @Summary Log in
+// @Description A direct source IP may make up to five attempts in one minute. Rate-limited requests include Retry-After.
 // @Tags Authentication
 // @Accept json
 // @Produce json
 // @Param X-Request-ID header string false "Optional request UUID"
-// @Param request body openAPILoginRequest true "Credentials"
+// @Param request body openAPILoginRequest true "Credentials; password is limited to 1,024 UTF-8 bytes"
 // @Success 200 {object} tokenResponse
 // @Failure 400 {object} problemResponse
 // @Failure 401 {object} problemResponse
+// @Failure 429 {object} problemResponse
 // @Router /v1/auth/login [post]
 func Login() {}
 

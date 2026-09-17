@@ -113,7 +113,7 @@ func run(logger *slog.Logger) int {
 		Batch:   batchService,
 		Staff:   staffService,
 	}, cfg.CursorKey)
-	if err := server.Serve(ctx, listener, server.Handler(authPool.Ping, control.Ping, shard.Ping, authentication, resourceHandler), logger); err != nil {
+	if err := server.Serve(ctx, listener, server.HandlerWithLoginAttemptLimit(authPool.Ping, control.Ping, shard.Ping, authentication, cfg.LoginAttemptLimit, resourceHandler), logger); err != nil {
 		logger.Error("HTTP server stopped unexpectedly")
 		return 1
 	}

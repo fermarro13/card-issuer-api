@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// dummyPasswordHash has the same approved Argon2id parameters as user hashes.
+// It prevents an unknown or disabled user from skipping password verification.
+const dummyPasswordHash = "$argon2id$v=19$m=19456,t=2,p=1$a5cSmLw26Ij1Grx1duyRbg$4TkbMQuIpUQA9uLWupb1Hz87cmt/Na1GIAD9hf97qWk"
+
 type UserRecord struct {
 	ID           string
 	Username     string
@@ -43,6 +47,9 @@ func (s *Service) Login(ctx context.Context, username, password, requestID strin
 
 	user, err := tx.UserByUsername(ctx, normalizeUsername(username), true)
 	if err != nil || user.Status != "enabled" {
+		if _, verifyErr := VerifyPassword(dummyPasswordHash, password); verifyErr != nil {
+			return TokenResponse{}, "", time.Time{}, verifyErr
+		}
 		if err := tx.RecordAudit(ctx, AuditEvent{EventType: "login", Outcome: "failed", RequestID: requestID, Details: map[string]string{"reason": "invalid_credentials"}}); err != nil {
 			return TokenResponse{}, "", time.Time{}, err
 		}

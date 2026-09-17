@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,7 +53,10 @@ func apiNotFound(w http.ResponseWriter, r *http.Request) {
 	writeProblem(w, r, http.StatusNotFound, "not_found", "The requested API endpoint does not exist.")
 }
 
-type authenticationHandler struct{ service auth.API }
+type authenticationHandler struct {
+	service   auth.API
+	admission *loginAdmission
+}
 type loginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -66,8 +70,13 @@ func (h authenticationHandler) login(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
+	if allowed, retryAfter := h.admission.allow(r.RemoteAddr); !allowed {
+		w.Header().Set("Retry-After", strconv.FormatInt(retryAfterSeconds(retryAfter), 10))
+		writeProblem(w, r, http.StatusTooManyRequests, "login_rate_limited", "Too many login attempts. Try again later.")
+		return
+	}
 	var input loginRequest
-	if !DecodeRequest(w, r, &input) || input.Username == "" || input.Password == "" {
+	if !DecodeRequest(w, r, &input) || input.Username == "" || input.Password == "" || len(input.Password) > auth.MaxPasswordBytes {
 		writeProblem(w, r, http.StatusBadRequest, "invalid_request", "username and password are required.")
 		return
 	}
@@ -82,6 +91,17 @@ func (h authenticationHandler) login(w http.ResponseWriter, r *http.Request) {
 	}
 	setRefreshCookie(w, refresh, expiresAt)
 	writeJSON(w, http.StatusOK, response)
+}
+
+func retryAfterSeconds(value time.Duration) int64 {
+	seconds := int64(value / time.Second)
+	if value%time.Second != 0 {
+		seconds++
+	}
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
 }
 
 func (h authenticationHandler) refresh(w http.ResponseWriter, r *http.Request) {

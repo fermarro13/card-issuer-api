@@ -81,6 +81,8 @@ services:
     environment:
       HTTP_ADDR: ":8080"
       APP_ENV: development
+      # Functional tests share one container source IP and require more than the production default of five attempts/minute.
+      LOGIN_ATTEMPT_LIMIT_PER_MINUTE: ${LOGIN_ATTEMPT_LIMIT_PER_MINUTE:-100}
       CREDENTIAL_VAULT_MODE: development
       DEVELOPMENT_VAULT_URL: http://devvault:8081
       PGHOST: postgres
