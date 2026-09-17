@@ -1,5 +1,7 @@
 # Issuer authorization vault and credential verifier
 
+**Status:** Delivered. The local Compose environment validates the mTLS authorization flow through the development vault. Independent QA and security review remain pending; a production PCI-compliant vault/HSM, PKI, deployment, and assessment remain external prerequisites.
+
 ## Goal
 
 Add a PCI-scoped credential-verification boundary that lets an authenticated bank request a card authorization check. The check approves only when credentials validate and the card is active and unexpired. The issuer business API, shard database, logs, audits, idempotency records, fixtures, and replay responses must not retain raw payment credentials.

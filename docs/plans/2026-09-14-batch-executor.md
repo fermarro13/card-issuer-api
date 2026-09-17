@@ -1,7 +1,7 @@
 # Batch Executor
 
 **Feature:** `BATCH-EXECUTOR-001`  
-**Status:** User-approved; architect approval required before implementation.  
+**Status:** Complete. Architect, QA, security, automated-test, database, and Compose acceptance gates passed.
 **Follow-on:** [Card-status Batch API](2026-09-14-card-status-batch-api.md)
 
 ## Goal

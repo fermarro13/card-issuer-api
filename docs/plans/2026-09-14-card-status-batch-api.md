@@ -1,5 +1,7 @@
 # CARD-STATUS-BATCH-API-001 — Card-status batch API
 
+**Status:** Delivered. Independent QA/security review and database-backed batch acceptance remain pending before closeout.
+
 ## Goal
 
 Implement the remaining public business endpoints in `docs/card-issuer-architecture.md`: reviewable card-status batch drafts, their reads, explicit dispatch, cancellation, and linked retry drafts.

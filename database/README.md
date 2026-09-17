@@ -89,7 +89,7 @@ The test seeds have their own per-database transaction locks. A committed bank w
 
 Runtime groups cannot read migration metadata, create schema objects, assume ownership, or bypass RLS. Public database/schema access and helper-function execution are restricted. Only the tenant-context function is callable by business runtime; internal guards run as triggers.
 
-The future application must authenticate and authorize the user **before** selecting a bank. PostgreSQL custom settings do not authenticate tenants: a trusted component with database access can choose any tenant context. The four staff roles are API authorization roles, not four database connection roles. Issuer scope still selects one bank per transaction.
+The application authenticates and authorizes the user **before** selecting a bank. PostgreSQL custom settings do not authenticate tenants: a trusted component with database access can choose any tenant context. The four staff roles are API authorization roles, not four database connection roles. Issuer scope still selects one bank per transaction.
 
 For each business transaction, use a bound parameter with `SELECT set_config('app.entity_id', $1, true)` after beginning the transaction. The final `true` makes it transaction-local. Never use a persistent session setting. Explicit tenant predicates remain required in repository queries. RLS applies to all fourteen bank tables, including Entity, with `FORCE ROW LEVEL SECURITY`; no context yields zero visible rows/rejected inserts, malformed UUID context raises an error. Commit/rollback clears context when connections are reused.
 

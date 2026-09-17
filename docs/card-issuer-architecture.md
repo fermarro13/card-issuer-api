@@ -4,7 +4,7 @@
 
 This document defines the target application architecture for Card Issuer API: its public HTTP API, its independently deployed batch-executor daemon, and the contracts between them and PostgreSQL.
 
-**Implementation status (2026-09-14):** the shard persistence contract described below is implemented in the initial schema and has database-harness coverage. The authentication endpoints, public card API, and public card-status batch API are implemented in the API process. The `cmd/executor` daemon remains application work.
+**Implementation status (2026-09-16):** The API, `cmd/executor`, `cmd/authorization`, and development-only shared vault/PKI Compose topology are implemented. Authentication and batch-executor closeout gates are complete. Public-resource QA coverage remains blocked; card-status-batch QA/security and database-backed acceptance remain pending; local authorization independent architect, QA, and security review remains pending. Production authorization still requires an externally provisioned PCI-compliant vault/HSM and PKI.
 
 The target system remains one Go module with shared internal domain packages. It is designed to be deployed as two binaries:
 
@@ -237,7 +237,7 @@ It also implements a separate system expiry-run header and per-card-item model r
 ## Verification requirements
 
 - API contract tests cover authentication, role/bank routing, error shapes, cursor behavior, idempotency replay/conflict, and secret exclusion. They verify that every bank-directory endpoint rejects `issuer_readonly`, `bank_operator`, and `bank_readonly`, including a bank operator requesting its assigned bank; only `issuer_operator` can manually retry an exhausted expiry item.
-- Card tests cover synchronous issue/replacement success, opaque local credential-reference generation, idempotency replay/conflict, every permitted/forbidden transition, same-status no-ops, replacement activation, and scheduled expiry.
+- Card tests cover synchronous vault-backed issue/replacement success, one-time credential disclosure with sanitized replay, idempotency replay/conflict, permitted/forbidden transitions, same-status no-ops, replacement activation, and scheduled expiry.
 - Database-harness tests cover draft construction, exact membership before dispatch, cancellation, linked retry provenance, per-item expiry retries, terminal expiry aggregates, and rejection of a retry once the card is expired. They require a disposable PostgreSQL 17 instance and `CI_TEST_DATABASE=1` to execute the integration path.
-- Future API and executor tests still need to cover contract authorization, cursor/idempotency behavior, concurrent workers, deterministic locks, lease expiry/fencing, crash recovery, fair selection, lost commit acknowledgement, and no duplicate batch application. Expiry coverage must include the `00:00` UTC schedule, independently committed per-card outcomes, manual-only recovery after exhaustion, and audited idempotent manual retries.
-- Deployment tests prove API and executor can start, become ready, scale, and shut down independently against the existing Compose PostgreSQL environment.
+- Automated, database, and Compose coverage now exercises contract authorization, cursor/idempotency behavior, concurrent workers, deterministic locks, lease expiry/fencing, crash recovery, fair selection, lost-acknowledgement safety, duplicate-application prevention, independent expiry outcomes, manual retry, and API/executor lifecycle behavior. The remaining feature-specific review gates are stated in the implementation status above.
+- The local authorization functional contract also exercises issue → activate → mTLS verification through the shared development vault. It is development-only and does not validate a production vault/HSM or production PKI deployment.

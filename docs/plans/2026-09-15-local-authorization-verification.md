@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed; awaiting approval.
+Delivered. `go test -count=1 ./...`, `go vet ./...`, `go test -race ./...`, and `git diff --check` passed with Go 1.27.1. The rebuilt Compose functional profile passed, including the mTLS authorization-vault boundary. Independent architect, QA, and security review remain pending.
 
 ## Goal
 

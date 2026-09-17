@@ -1,6 +1,6 @@
 # Card Issuer API — Database Design
 
-**Status:** Design draft; documentation delivery, not implementation approval.  
+**Status:** Implemented design baseline. The initial schema and associated application features are delivered to the extent recorded in `docs/plans/INDEX.md`; this document is not a production-readiness or feature-gate approval.
 **Date:** 2026-09-10  
 **Related plans:** [Initial Database Design](plans/2026-09-10-database-design-document.md); [Authentication and Authorization Amendment](plans/2026-09-10-database-authentication-authorization.md)
 
@@ -91,9 +91,9 @@ A local issue or replacement command creates an `issued` card synchronously; the
 
 Replacement creates a new issued Card linked to its predecessor. The old card keeps its identity and history until activation of the successor closes it. Batch status updates use the same centrally validated lifecycle rules as individual card operations; replacement and issuance are not implicit status-only batch actions.
 
-For v1, local issuance generates only a non-secret opaque credential reference. PAN, CVV, secrets, credentials, and provider-like responses must not appear in ordinary responses, URLs, logs, audit payloads, examples, or fixtures. A future credential provider, vault, or cryptographic service requires a separately designed integration boundary.
+Issuance and replacement provision through the credential-vault boundary using the card UUID as correlation and idempotency identity. The database retains only the immutable masked PAN; a transient credential disclosure is returned only in the initial successful response, never from an idempotency replay. PAN, CVV, verification-code hashes, provider-like responses, and payment-data fingerprints must not appear in persistent storage, URLs, logs, audit payloads, examples, fixtures, or outbox messages. Development/test uses an explicitly restricted non-durable vault; production requires a separately provisioned PCI-compliant vault/HSM.
 
-The precise state machine and already-at-target behavior are open implementation decisions. No worker may invent or bypass those rules; remote-confirmation behavior is deferred until a credential-provider integration is designed.
+The lifecycle state machine and already-at-target behavior are implemented centrally and shared by API and executor work. No worker may invent or bypass those rules. Credential verification is limited to the separate mTLS authorization service; financial authorization and any remote-confirmation workflow remain out of scope.
 
 ## 4. Keys, integrity, and audit
 
@@ -371,7 +371,7 @@ Reuse indexes created by constraints. Central global queries do not automaticall
 
 ### 9.4. Login, JWTs, and refresh rotation
 
-**Defaults:** access JWTs last 15 minutes; session/refresh-family validity ends seven days after login with no sliding extension. Multiple concurrent sessions are allowed. Each refresh credential is a cryptographically random opaque value stored only as a hash. These are design defaults, not implemented endpoints.
+**Implemented defaults:** access JWTs last 15 minutes; session/refresh-family validity ends seven days after login with no sliding extension. Multiple concurrent sessions are allowed. Each refresh credential is a cryptographically random opaque value stored only as a hash.
 
 Login validates the provisioned user's password and current enabled state, then atomically creates the session with the current `auth_version`, its initial refresh-token hash, and successful-login audit evidence. Do not return credentials before commit. Credential/session mutations and their successful authentication audits share a control-database transaction; rejected attempts are recorded without rolling back required failure/revocation evidence.
 
@@ -411,7 +411,7 @@ Do not trust a work message to override the submitter ID, batch bank, or current
 
 ## 10. Validation scenarios
 
-These scenarios specify future implementation evidence; they are not claims that a working database has already passed them.
+These scenarios remain the validation baseline. The implemented database, authentication, public-resource, batch-executor, and local-authorization work has passing automated and Compose evidence where recorded in `DEVELOPMENT_LOG.md`; any remaining feature-specific review gates are listed in `docs/plans/INDEX.md`.
 
 Use a provisional benchmark of **100 banks × 10,000 cards**, corresponding clients/accounts, and approximately ten history/audit entries per card. Include a substantially larger and busier bank. These are test inputs, not production capacity guarantees. Record hardware, data distribution, concurrency, request mix, throughput, latency, and resource use.
 

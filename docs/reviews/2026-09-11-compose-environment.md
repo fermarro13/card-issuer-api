@@ -1,6 +1,8 @@
 # ENV-COMPOSE-001 review and validation evidence
 
-Scope: [approved Compose environment plan](../plans/2026-09-11-docker-compose-environment.md). Implementation is present; final container acceptance remains pending. Existing database migrations are unchanged.
+Scope: [approved Compose environment plan](../plans/2026-09-11-docker-compose-environment.md). This original review recorded that implementation was present while final container acceptance was pending. Existing database migrations are unchanged.
+
+> **Status update (2026-09-16):** This is the original review record. Its Docker-engine blocker was superseded by the successful live Compose functional run recorded for [LOCAL-AUTHORIZATION-VERIFICATION-001](../../DEVELOPMENT_LOG.md). Architect and security approvals remain as recorded below; no separate formal QA closeout approval has been recorded.
 
 ## Reviews
 

@@ -137,6 +137,7 @@ Concise, append-only record of material project interactions and decisions. Do n
 - Security · Gate: APPROVED for reviewed source and available PostgreSQL evidence; container execution remains unverified.
 - QA · Gate: BLOCKED pending actual image builds and isolated Compose smoke tests. Docker Desktop cannot start its WSL2 engine because virtualization/Virtual Machine Platform is unavailable (HCS_E_HYPERV_NOT_INSTALLED).
 - Orchestrator · Status: Implementation delivered; Docker-dependent acceptance remains pending. No failed-gate exception or full feature completion claimed. [Review evidence](docs/reviews/2026-09-11-compose-environment.md).
+- Follow-on acceptance · PASSED (2026-09-16): LOCAL-AUTHORIZATION-VERIFICATION-001 rebuilt the images and passed the live Compose functional profile, resolving the Docker-engine execution blocker. Architect and security approvals remain recorded; a separate formal QA closeout approval is not recorded.
 
 ## 2026-09-13 — AUTH-API-001: Authentication endpoints
 
@@ -156,7 +157,7 @@ Concise, append-only record of material project interactions and decisions. Do n
 - QA · Gate: APPROVED. The unskipped PostgreSQL 17 suite covers authentication session/audit behavior, rotation/replay concurrency, disabled/version/expiry rejection, password invalidation, runtime-account restrictions, and recovery paths.
 - Security · Gate: APPROVED. Re-reviewed the Docker test adapters and expired-session fixture: secret values are inherited by name rather than command arguments, SQL travels over stdin, and the immutable-session trigger is bypassed only within the uniquely named disposable test database.
 - Orchestrator · Status: Complete. Architect approval, Go 1.27.1 test evidence, QA approval, and security approval are recorded.
-- Orchestrator · Status: Implementation delivered; closeout blocked by the required unskipped PostgreSQL integration gate.
+- Orchestrator · Reconciliation: The preceding unskipped PostgreSQL integration result resolved the earlier QA blocker; AUTH-API-001 is complete.
 
 ## Entry template
 

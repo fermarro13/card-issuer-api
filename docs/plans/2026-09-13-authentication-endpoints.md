@@ -1,5 +1,7 @@
 # AUTH-API-001 — Authentication endpoints
 
+**Status:** Complete. Architect, QA, security, automated-test, PostgreSQL integration, and Docker verification gates passed.
+
 ## Goal
 
 Implement the public authentication endpoints against the existing control-database authentication schema: login, refresh, logout, current user, and password change.

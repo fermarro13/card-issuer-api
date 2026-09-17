@@ -2,6 +2,8 @@
 
 Approved plan for ENV-COMPOSE-001. This succeeds the external-instance setup approach in [PostgreSQL Creation Scripts](2026-09-10-postgresql-creation-scripts.md); existing migrations remain unchanged.
 
+**Status:** Delivered. A later live Compose functional run passed as part of LOCAL-AUTHORIZATION-VERIFICATION-001, superseding the original Docker-engine availability blocker. Architect and security approvals are recorded; formal QA closeout approval is not recorded.
+
 ## Outcome
 
 Start PostgreSQL, initialize both databases, and launch the Go base server with `docker compose up --build`. Provide one compose.yaml and one multi-stage Dockerfile. Authentication endpoints and card operations remain deferred.

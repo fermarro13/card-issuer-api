@@ -1,5 +1,7 @@
 # PUBLIC-RESOURCE-API-001 — Public resource and card command API
 
+**Status:** Delivered; security approved. Closeout remains blocked on the documented QA coverage gate.
+
 ## Goal
 
 Implement the documented public resource API, card lifecycle commands, and the manual expiry-item retry command using authenticated, tenant-scoped PostgreSQL access.
